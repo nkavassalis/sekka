@@ -6,14 +6,14 @@ A terminal (TUI) chat client for any **OpenAI-compatible** LLM endpoint
 ```
 ┌──────────────────────────────────────────────┐
 │ You:                                         │  chat history
-│ hello!                                       │  (~80% of screen,
-│                                              │   PageUp/PageDown to
-│ Assistant:                                   │   scroll)
+│ hello!                                       │  (scrollable with
+│                                              │   PageUp/PageDown,
+│ Assistant:                                   │   split is configurable)
 │ hi, how can I help?                          │
 │ [1.4s, 38.2 tok/s]                           │
 ├──────────────────────────────────────────────┤
-│ > type a message...                          │  input (~20% of screen,
-│   (multi-line)                               │   arrow keys move cursor)
+│ > type a message...                          │  input
+│   (multi-line)                               │   (arrow keys move cursor)
 └──────────────────────────────────────────────┘
 ```
 

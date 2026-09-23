@@ -109,6 +109,19 @@ def test_invalid_save_format_raises():
         validate_config(bad)
 
 
+def test_history_percent_bounds():
+    assert DEFAULT_CONFIG["history_percent"] == 80
+    for bad_value in (49, 96, "80", None, 80.5, True):
+        bad = json.loads(json.dumps(DEFAULT_CONFIG))
+        bad["history_percent"] = bad_value
+        with pytest.raises(ConfigError, match="history_percent"):
+            validate_config(bad)
+    for good in (50, 80, 95):
+        good_values = json.loads(json.dumps(DEFAULT_CONFIG))
+        good_values["history_percent"] = good
+        validate_config(good_values)
+
+
 def test_deep_merge_is_not_destructive():
     base = {"a": {"b": 1}, "c": [1, 2]}
     override = {"a": {"d": 2}}

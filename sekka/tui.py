@@ -1,8 +1,9 @@
 """The Sekka terminal UI (built on Textual).
 
-Layout: chat history takes the top ~80% of the screen (4fr), the multi-line
-input editor takes the bottom ~20% (1fr). Arrow keys move inside the input
-editor; PageUp/PageDown scroll the history (both configurable).
+Layout: chat history takes the top of the screen (config.history_percent,
+default 80) and the multi-line input editor the remainder. Arrow keys move
+inside the input editor; PageUp/PageDown scroll the history (both
+configurable).
 """
 
 from __future__ import annotations
@@ -217,12 +218,12 @@ class SekkaApp(App):
 
     CSS = """
     #history {
-        height: 4fr;
+        height: $sekka-history-fr;
         width: 1fr;
         padding: 0 1;
     }
     #input_panel {
-        height: 1fr;
+        height: $sekka-input-fr;
         width: 1fr;
         border: round $sekka-border;
         padding: 0 1;
@@ -258,6 +259,10 @@ class SekkaApp(App):
         variables["sekka-stats"] = _hex(theme["stats"])
         variables["sekka-error"] = _hex(theme["error"])
         variables["sekka-border"] = _hex(theme["system"])
+        percent = getattr(self, "config", None)
+        percent = percent.get("history_percent", 80) if percent is not None else 80
+        variables["sekka-history-fr"] = f"{percent}fr"
+        variables["sekka-input-fr"] = f"{100 - percent}fr"
         return variables
 
     # ------------------------------------------------------------------ layout

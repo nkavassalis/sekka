@@ -31,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "temperature": 0.7,
     "max_tokens": None,
     "request_timeout": 120,
+    "history_percent": 80,
     "autosave": False,
     "save_dir": ".",
     "save_format": "json",
@@ -124,6 +125,10 @@ def validate_config(values: dict[str, Any]) -> None:
         raise ConfigError(
             f"Config 'save_format' must be one of {sorted(VALID_SAVE_FORMATS)}."
         )
+
+    percent = values.get("history_percent")
+    if not isinstance(percent, int) or isinstance(percent, bool) or not 50 <= percent <= 95:
+        raise ConfigError("Config 'history_percent' must be an integer between 50 and 95.")
 
     for name, binding in values.get("keys", {}).items():
         if not isinstance(binding, str) or not binding.strip():

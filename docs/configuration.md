@@ -25,6 +25,7 @@ built-in default**.
   "temperature": 0.7,
   "max_tokens": null,
   "request_timeout": 120,
+  "history_percent": 80,
   "autosave": false,
   "save_dir": ".",
   "save_format": "json",
@@ -55,7 +56,7 @@ built-in default**.
 | `temperature`     | number/null     | `0.7`                         | `null` omits the parameter entirely                |
 | `max_tokens`      | int/null        | `null`                        | `null` omits the parameter                         |
 | `request_timeout` | seconds         | `120`                         | HTTP timeout for chat requests                     |
-| `autosave`        | bool            | `false`                       | Save a timestamped copy after every reply          |
+| `history_percent` | int (50-95)     | `80`                          | Share of the screen for the chat history; the rest goes to the input editor |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |
 | `save_format`     | `json`/`markdown` | `json`                      | `.json` or `.md` output                            |
 
