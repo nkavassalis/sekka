@@ -36,9 +36,16 @@ def _check_response(resp: requests.Response) -> Any:
     if resp.status_code != 200:
         detail = (resp.text or "")[:300].strip()
         raise ClientError(f"HTTP {resp.status_code} from endpoint: {detail}")
+    content_type = resp.headers.get("Content-Type", "")
     try:
         return resp.json()
     except ValueError as exc:
+        if "html" in content_type.lower():
+            raise ClientError(
+                "Endpoint returned an HTML page, not JSON - "
+                "is the endpoint URL the base API URL of your LLM server "
+                "(e.g. http://host:8000/v1), not a web UI?"
+            ) from exc
         raise ClientError(f"Endpoint returned invalid JSON: {exc}") from exc
 
 
