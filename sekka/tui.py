@@ -14,6 +14,7 @@ from typing import Any, Optional
 from rich.color import Color
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -84,6 +85,11 @@ class ModelScreen(ModalScreen[Optional[str]]):
         super().__init__()
         self.models = models
 
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("Select a model (enter to choose, esc to cancel):", classes="msg-system")
@@ -102,6 +108,8 @@ class ModelScreen(ModalScreen[Optional[str]]):
 
 class ConfirmScreen(ModalScreen[bool]):
     """Simple yes/no confirmation."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
 
     DEFAULT_CSS = """
     ConfirmScreen { align: center middle; }
@@ -125,9 +133,14 @@ class ConfirmScreen(ModalScreen[bool]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
 
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
 
 class ConfigScreen(ModalScreen[Optional[dict]]):
     """The /config screen: edit endpoint, model, system prompt, etc."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
 
     DEFAULT_CSS = """
     ConfigScreen { align: center middle; }
@@ -141,6 +154,9 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
     #config_buttons { align-horizontal: right; }
     #config_buttons Button { margin-left: 1; }
     """
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -171,7 +187,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "config_cancel":
-            self.dismiss(None)
+            self.action_cancel()
             return
 
         endpoint = self.query_one("#cfg_endpoint", Input).value.strip()

@@ -5,7 +5,7 @@ from pathlib import Path
 from sekka import client
 from sekka.client import ChatResponse
 from sekka.config import DEFAULT_CONFIG, Config
-from sekka.tui import ConfirmScreen, SekkaApp
+from sekka.tui import ConfigScreen, ConfirmScreen, SekkaApp
 
 
 def make_config(**overrides):
@@ -152,6 +152,33 @@ def test_save_command_writes_file_after_confirm(tmp_path):
 
         saved = list(Path(tmp_dir).glob("sekka_*.json"))
         assert len(saved) == 1
+    asyncio.run(go())
+
+
+def test_escape_closes_config_screen():
+    async def go():
+        app = SekkaApp(make_config(model="test-model"))
+        async with app.run_test(size=(100, 35)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfigScreen))
+            await pilot.press("escape")
+            await wait_for(pilot, lambda: not isinstance(app.screen, ConfigScreen))
+            assert "Configuration saved" not in history_text(app)  # cancelled, not saved
+    asyncio.run(go())
+
+
+def test_escape_cancels_save_confirmation():
+    async def go():
+        app = SekkaApp(make_config(model="test-model"))
+        async with app.run_test(size=(100, 35)) as pilot:
+            app.chat.append({"role": "user", "content": "x"})
+            await run_typing(pilot, "/save")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+            await pilot.press("escape")
+            await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmScreen))
+            assert "(save cancelled)" in history_text(app)
     asyncio.run(go())
 
 
