@@ -383,7 +383,7 @@ class SekkaApp(App):
     def _thinking_text(self) -> str:
         glyph = self.SNOWFLAKE_FRAMES[self._thinking_frame % len(self.SNOWFLAKE_FRAMES)]
         elapsed = time.monotonic() - self._thinking_started
-        return f"{glyph} {elapsed:.0f}s"
+        return f"{glyph}  {elapsed:.0f}s"
 
     def _start_thinking(self) -> None:
         self._thinking_frame = 0
