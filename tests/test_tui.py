@@ -182,6 +182,57 @@ def test_escape_cancels_save_confirmation():
     asyncio.run(go())
 
 
+def test_custom_role_labels_are_used():
+    async def go():
+        def fake_chat(*a, **k):
+            return ChatResponse(content="woof", completion_tokens=4, elapsed=0.5)
+
+        original = client.chat_completion
+        client.chat_completion = fake_chat
+        try:
+            cfg = make_config(model="test-model")
+            cfg.values["labels"] = {"user": "Nick", "assistant": "Qwen"}
+            app = SekkaApp(cfg)
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hi")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                text = history_text(app)
+                assert "Nick:\nhi" in text
+                assert "Qwen:\nwoof" in text
+                assert "You:" not in text and "Assistant:" not in text
+        finally:
+            client.chat_completion = original
+    asyncio.run(go())
+
+
+def test_thinking_spinner_shown_then_removed():
+    async def go():
+        def slow_chat(*a, **k):
+            import time as _t
+            _t.sleep(0.4)
+            return ChatResponse(content="done", completion_tokens=2, elapsed=0.4)
+
+        original = client.chat_completion
+        client.chat_completion = slow_chat
+        try:
+            app = SekkaApp(make_config(model="test-model"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hello")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app._thinking is not None)
+                spinner = app._thinking
+                assert spinner.is_mounted
+                assert app._thinking_timer is not None  # animation running
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                assert app._thinking is None
+                assert app._thinking_timer is None
+                await wait_for(pilot, lambda: spinner.parent is None)  # detached from DOM
+        finally:
+            client.chat_completion = original
+    asyncio.run(go())
+
+
 def test_clear_command_resets_history():
     async def go():
         app = SekkaApp(make_config(model="test-model"))

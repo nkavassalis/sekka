@@ -35,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "autosave": False,
     "save_dir": ".",
     "save_format": "json",
+    "labels": {"user": "You", "assistant": "Assistant"},
     "theme": {
         "user": "cyan",
         "assistant": "magenta",
@@ -129,6 +130,14 @@ def validate_config(values: dict[str, Any]) -> None:
     percent = values.get("history_percent")
     if not isinstance(percent, int) or isinstance(percent, bool) or not 50 <= percent <= 95:
         raise ConfigError("Config 'history_percent' must be an integer between 50 and 95.")
+
+    labels = values.get("labels", {})
+    for name in ("user", "assistant"):
+        label = labels.get(name)
+        if not isinstance(label, str) or not label.strip() or len(label) > 30:
+            raise ConfigError(
+                f"Config label '{name}' must be a non-empty string of at most 30 characters."
+            )
 
     for name, binding in values.get("keys", {}).items():
         if not isinstance(binding, str) or not binding.strip():

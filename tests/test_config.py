@@ -109,6 +109,18 @@ def test_invalid_save_format_raises():
         validate_config(bad)
 
 
+def test_labels_defaults_and_validation():
+    assert DEFAULT_CONFIG["labels"] == {"user": "You", "assistant": "Assistant"}
+    for bad in ("", "   ", "x" * 31, 42, None):
+        bad_values = json.loads(json.dumps(DEFAULT_CONFIG))
+        bad_values["labels"]["user"] = bad
+        with pytest.raises(ConfigError, match="label"):
+            validate_config(bad_values)
+    good = json.loads(json.dumps(DEFAULT_CONFIG))
+    good["labels"] = {"user": "Nick", "assistant": "Qwen"}
+    validate_config(good)
+
+
 def test_history_percent_bounds():
     assert DEFAULT_CONFIG["history_percent"] == 80
     for bad_value in (49, 96, "80", None, 80.5, True):

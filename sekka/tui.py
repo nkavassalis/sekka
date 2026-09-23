@@ -9,6 +9,7 @@ configurable).
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Optional
 
 from rich.color import Color
@@ -149,6 +150,8 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
         padding: 1 2; background: $surface; border: thick $primary;
     }
     ConfigScreen Label { padding-top: 1; color: $primary; }
+    #config_labels Input { width: 1fr; }
+    #config_labels { height: auto; }
     ConfigScreen TextArea { height: 6; border: round $primary 40%; }
     ConfigScreen Input { border: round $primary 40%; }
     #config_buttons { align-horizontal: right; }
@@ -170,6 +173,10 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
             yield Input(value=str(values.get("endpoint", "")), id="cfg_endpoint")
             yield Label("Model (leave empty to pick from endpoint)")
             yield Input(value=str(values.get("model", "")), id="cfg_model")
+            yield Label("Your name label / Assistant name label")
+            with Vertical(id="config_labels"):
+                yield Input(value=str(values.get("labels", {}).get("user", "You")), id="cfg_label_user", placeholder="You")
+                yield Input(value=str(values.get("labels", {}).get("assistant", "Assistant")), id="cfg_label_assistant", placeholder="Assistant")
             yield Label("API key (optional)")
             yield Input(value=str(values.get("api_key", "")), password=True, id="cfg_api_key")
             yield Label("System prompt")
@@ -211,10 +218,14 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
         except _ConfigInputError:
             return
 
+        user_label = self.query_one("#cfg_label_user", Input).value.strip() or "You"
+        assistant_label = self.query_one("#cfg_label_assistant", Input).value.strip() or "Assistant"
+
         self.dismiss(
             {
                 "endpoint": endpoint,
                 "model": self.query_one("#cfg_model", Input).value.strip(),
+                "labels": {"user": user_label, "assistant": assistant_label},
                 "api_key": self.query_one("#cfg_api_key", Input).value,
                 "system_prompt": self.query_one("#cfg_system", TextArea).text,
                 "temperature": temperature,
@@ -262,6 +273,9 @@ class SekkaApp(App):
         self.chat: list[dict[str, str]] = []  # user/assistant history (no system)
         self.busy = False
         self._thinking: Optional[Static] = None
+        self._thinking_frame = 0
+        self._thinking_started = 0.0
+        self._thinking_timer = None
         self.ui_lines: list[tuple[str, str]] = []  # (role, text) log, handy for tests
 
     def get_css_variables(self) -> dict[str, str]:
@@ -314,9 +328,10 @@ class SekkaApp(App):
     def _history(self) -> VerticalScroll:
         return self.query_one("#history", VerticalScroll)
 
-    def _append(self, text: str, role: str) -> Static:
+    def _append(self, text: str, role: str, log: bool = True) -> Static:
         widget = Static(text, classes=f"msg-{role}")
-        self.ui_lines.append((role, text))
+        if log:
+            self.ui_lines.append((role, text))
         self._history().mount(widget)
         self._history().scroll_end(animate=False)
         return widget
@@ -355,10 +370,40 @@ class SekkaApp(App):
             self._sys("No model selected. Use /models or /config first.", error=True)
             return
         self.chat.append({"role": "user", "content": text})
-        self._append(f"You:\n{text}", "user")
+        user_label = self.config["labels"]["user"]
+        self._append(f"{user_label}:\n{text}", "user")
         self.busy = True
-        self._thinking = self._append("\u2581 thinking\u2026", "stats")
+        self._start_thinking()
         self._chat_worker()
+
+    # ------------------------------------------------------- thinking spinner
+
+    SNOWFLAKE_FRAMES = ("\u2744", "\u2745", "\u2746", "\u2745")  # ❄ ❅ ❆ ❅
+
+    def _thinking_text(self) -> str:
+        glyph = self.SNOWFLAKE_FRAMES[self._thinking_frame % len(self.SNOWFLAKE_FRAMES)]
+        elapsed = time.monotonic() - self._thinking_started
+        dots = "." * (1 + self._thinking_frame % 3)
+        return f"{glyph} thinking{dots} {elapsed:.0f}s {glyph}"
+
+    def _start_thinking(self) -> None:
+        self._thinking_frame = 0
+        self._thinking_started = time.monotonic()
+        self._thinking = self._append(self._thinking_text(), "stats", log=False)
+        self._thinking_timer = self.set_interval(0.15, self._advance_thinking)
+
+    def _advance_thinking(self) -> None:
+        self._thinking_frame += 1
+        if self._thinking is not None and self._thinking.is_mounted:
+            self._thinking.update(self._thinking_text())
+
+    def _stop_thinking(self) -> None:
+        if self._thinking_timer is not None:
+            self._thinking_timer.stop()
+            self._thinking_timer = None
+        if self._thinking is not None:
+            self._thinking.remove()
+            self._thinking = None
 
     @work(exclusive=True, group="chat")
     async def _chat_worker(self) -> None:
@@ -380,17 +425,18 @@ class SekkaApp(App):
                 timeout=float(cfg.get("request_timeout", 120)),
             )
         except client.ClientError as exc:
-            self._thinking.remove()
+            self._stop_thinking()
             self.busy = False
             self._sys(f"Error: {exc}", error=True)
             # roll back the unanswered user turn so history stays consistent
             self.chat.pop()
             return
 
-        self._thinking.remove()
+        self._stop_thinking()
         self.busy = False
         self.chat.append({"role": "assistant", "content": resp.content})
-        self._append(f"Assistant:\n{resp.content}", "assistant")
+        assistant_label = self.config["labels"]["assistant"]
+        self._append(f"{assistant_label}:\n{resp.content}", "assistant")
         self._append(format_stats(resp.elapsed, resp.completion_tokens), "stats")
         if self.config.get("autosave") and self.chat:
             path = self._save_history()

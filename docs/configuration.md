@@ -29,6 +29,7 @@ built-in default**.
   "autosave": false,
   "save_dir": ".",
   "save_format": "json",
+  "labels": {"user": "You", "assistant": "Assistant"},
   "theme": {
     "user": "cyan",
     "assistant": "magenta",
@@ -57,6 +58,8 @@ built-in default**.
 | `max_tokens`      | int/null        | `null`                        | `null` omits the parameter                         |
 | `request_timeout` | seconds         | `120`                         | HTTP timeout for chat requests                     |
 | `history_percent` | int (50-95)     | `80`                          | Share of the screen for the chat history; the rest goes to the input editor |
+| `labels.user`     | string          | `"You"`                       | Name shown before your messages (1–30 chars)       |
+| `labels.assistant`| string          | `"Assistant"`                 | Name shown before replies (also editable in `/config`) |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |
 | `save_format`     | `json`/`markdown` | `json`                      | `.json` or `.md` output                            |
 
