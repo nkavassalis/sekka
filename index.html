@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sekka — a terminal chat client for OpenAI-compatible LLMs</title>
+<meta name="description" content="Sekka is a small TUI chat client for any OpenAI-compatible LLM endpoint (vLLM, llama.cpp, Ollama, LM Studio). Configurable, scriptable, no cloud lock-in.">
+<style>
+  :root {
+    --bg: #12141a; --panel: #1a1d26; --text: #d8dbe2; --dim: #8b90a0;
+    --cyan: #57c8e8; --magenta: #d78bd7; --yellow: #e8d08b; --grey: #5a5f6e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 2.4rem; margin: 1.5rem 0 .25rem; }
+  h1 .dot { color: var(--magenta); }
+  .tagline { color: var(--dim); font-size: 1.1rem; margin-bottom: 2rem; }
+  h2 { color: var(--yellow); font-size: 1.15rem; margin-top: 2.5rem;
+       border-bottom: 1px solid #2a2e3a; padding-bottom: .3rem; }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  pre { background: var(--panel); border: 1px solid #2a2e3a; border-radius: 8px;
+        padding: .9rem 1.1rem; overflow-x: auto; font-size: .9rem; line-height: 1.5; }
+  code { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace; }
+  p code, li code { background: var(--panel); padding: .1rem .35rem; border-radius: 4px; font-size: .9em; }
+  .screen { color: #c9cdd6; }
+  .screen .u { color: var(--cyan); } .screen .a { color: var(--magenta); }
+  .screen .s { color: var(--grey); } .screen .b { color: var(--yellow); }
+  ul { padding-left: 1.2rem; }
+  .buttons { margin: 1.5rem 0 0; display: flex; gap: .75rem; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: .55rem 1.1rem; border-radius: 8px;
+         border: 1px solid var(--cyan); color: var(--cyan); font-weight: 600; }
+  .btn.primary { background: var(--cyan); color: #10131a; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  td, th { text-align: left; padding: .35rem .6rem; border-bottom: 1px solid #2a2e3a; }
+  th { color: var(--dim); font-weight: 600; }
+  footer { margin-top: 3.5rem; color: var(--grey); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sekka<span class="dot">.</span></h1>
+  <p class="tagline">A small, honest terminal chat client for any OpenAI-compatible LLM endpoint.<br>
+  vLLM · llama.cpp · Ollama · LM Studio · anything with <code>/v1/chat/completions</code>.</p>
+
+<pre class="screen">
+┌──────────────────────────────────────────────┐
+│ <span class="u">You:</span>                                         │
+│ hello!                                       │
+│                                              │
+│ <span class="a">Assistant:</span>                                   │
+│ hi, how can I help?                          │
+│ <span class="s">[1.4s, 38.2 tok/s]</span>                           │
+├──────────────────────────────────────────────┤
+│ <span class="b">&gt;</span> type a message...                          │
+└──────────────────────────────────────────────┘
+</pre>
+
+<div class="buttons">
+  <a class="btn primary" href="https://github.com/nkavassalis/sekka">GitHub repository</a>
+  <a class="btn" href="https://github.com/nkavassalis/sekka#readme">README</a>
+</div>
+
+<h2>Install</h2>
+<pre><code>git clone https://github.com/nkavassalis/sekka.git
+cd sekka
+pip install -e .</code></pre>
+
+<h2>Run</h2>
+<pre><code>sekka --endpoint http://my-vllm-box:8000/v1</code></pre>
+<p>No model? Sekka asks the endpoint's <code>/models</code> and lets you pick.
+Everything (<code>--endpoint</code>, <code>--model</code>, <code>--system</code>, keys, colors)
+can also live in <code>.sekka/config.json</code> or be edited in-app with <code>/config</code>.</p>
+
+<h2>What you get</h2>
+<ul>
+  <li><b>Plain TUI chat</b> — scrollable history, multi-line input, no mouse required</li>
+  <li><b>Model discovery</b> from any OpenAI-compatible server</li>
+  <li><b>Timing line</b> after every reply: <code>[1.4s, 38.2 tok/s]</code></li>
+  <li><b><code>/save</code></b> to timestamped JSON/Markdown — nothing is written unless you ask</li>
+  <li><b>Configurable</b> colors and key bindings; layered CLI &gt; env &gt; file config</li>
+</ul>
+
+<h2>Slash commands</h2>
+<table>
+  <tr><th>command</th><th>what it does</th></tr>
+  <tr><td><code>/help</code></td><td>commands &amp; current key bindings</td></tr>
+  <tr><td><code>/save</code></td><td>save history to a timestamped file (asks first)</td></tr>
+  <tr><td><code>/config</code></td><td>in-app configuration screen</td></tr>
+  <tr><td><code>/models</code></td><td>re-fetch models and pick one</td></tr>
+  <tr><td><code>/clear</code></td><td>clear the chat</td></tr>
+  <tr><td><code>/exit</code></td><td>quit (<code>ctrl+q</code> also works)</td></tr>
+</table>
+
+<h2>Why “sekka”?</h2>
+<p>雪華 — <i>sekka</i> — “snowflake”: each chat crystallises one exchange at a time, and no two are
+alike. Like a good terminal tool it stays close to the metal: no accounts, no telemetry,
+no cloud — it talks to the inference server <em>you</em> point it at.</p>
+
+<footer>Built with <a href="https://github.com/Textualize/textual">Textual</a>. Source and issues on
+<a href="https://github.com/nkavassalis/sekka">GitHub</a>.<br>
+Built by Qwen 3.8 Flash Next using 0.04 kWh of Canadian electricity. ⚡🇨🇦</footer>
+</main>
+</body>
+</html>
