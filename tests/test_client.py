@@ -6,10 +6,11 @@ from sekka.client import ClientError, chat_completion, list_models
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if self._payload is None:
@@ -106,3 +107,12 @@ def test_chat_completion_invalid_json(captured):
     captured["respond"] = lambda: FakeResponse(200, None, text="not json")
     with pytest.raises(ClientError, match="invalid JSON"):
         chat_completion("http://h/v1", "m", [])
+
+
+def test_html_response_gives_clear_error(captured):
+    captured["respond"] = lambda: FakeResponse(
+        200, None, text="<html>sparkDash</html>",
+        headers={"Content-Type": "text/html; charset=utf-8"},
+    )
+    with pytest.raises(ClientError, match="HTML page, not JSON"):
+        list_models("http://h/v1")
