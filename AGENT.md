@@ -51,6 +51,9 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
     raise MountError.
   - `DirectoryTree` + `on_directory_tree_file_selected` makes a fine minimal
     file browser (FileBrowseScreen starts in `.sekka` when it exists).
+  - `Screen` objects have **no** `push_screen` in Textual 8 — push from a
+    screen via `self.app.push_screen(...)` (KnowledgeScreen's browse button
+    crashed in real use over this; test covers it).
   - App exit state is `app._exit` (private); `App.exit()` sets it.
 - ctrl+c is a **priority app binding**: copy must be handled manually
   (selection check + `action_copy()`) because priority steals it from TextArea.

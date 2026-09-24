@@ -438,7 +438,7 @@ class KnowledgeScreen(ModalScreen[None]):
             self.dismiss(None)
         elif bid == "k_browse":
             start = ".sekka" if os.path.isdir(".sekka") else "."
-            self.push_screen(FileBrowseScreen(start), self._got_path)
+            self.app.push_screen(FileBrowseScreen(start), self._got_path)
         elif bid == "k_add":
             path = self.query_one("#k_path", Input).value.strip()
             desc = self.query_one("#k_desc", Input).value.strip()

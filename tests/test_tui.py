@@ -559,6 +559,24 @@ def test_escape_clears_input():
     asyncio.run(go())
 
 
+def test_knowledge_browse_opens_file_browser(tmp_path):
+    from textual.widgets import Button
+
+    async def go():
+        from sekka.tui import FileBrowseScreen, KnowledgeScreen
+
+        app = SekkaApp(make_config(model="m"))
+        async with app.run_test(size=(110, 36)) as pilot:
+            await run_typing(pilot, "/knowledge")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, KnowledgeScreen))
+            app.screen.query_one("#k_browse", Button).press()
+            await wait_for(pilot, lambda: isinstance(app.screen, FileBrowseScreen))
+            await pilot.press("escape")
+            await wait_for(pilot, lambda: isinstance(app.screen, KnowledgeScreen))
+    asyncio.run(go())
+
+
 def test_ctrl_c_needs_two_presses_to_quit():
     async def go():
         app = SekkaApp(make_config(model="test-model"))
