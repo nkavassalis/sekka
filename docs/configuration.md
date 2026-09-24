@@ -56,6 +56,11 @@ built-in default**.
 
 ## Keys explained
 
+Every key below except `labels`, `theme`, `keys` and `knowledge` also has a
+CLI flag (README usage lists them; flags win over the config file). The
+structured keys are managed in the config file or the `/config` and
+`/knowledge` screens.
+
 | Key               | Type            | Default                       | Meaning                                            |
 |-------------------|-----------------|-------------------------------|----------------------------------------------------|
 | `endpoint`        | string          | `http://localhost:8000/v1`    | Base URL of an OpenAI-compatible server (no trailing `/chat/completions`) |
@@ -133,6 +138,7 @@ according to `context_mode`:
 | `labels.assistant`| string          | `"Assistant"`                 | Name shown before replies (also editable in `/config`) |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |
 | `save_format`     | `json`/`markdown` | `json`                      | `.json` or `.md` output                            |
+| `autosave`        | bool            | `false`                       | Write a timestamped file after every reply (still keeps confirm-before-write for manual `/save`) |
 
 ### `theme`
 

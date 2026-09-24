@@ -6,7 +6,9 @@ from pathlib import Path
 from sekka import client
 from sekka.client import ChatResponse, ModelInfo
 from sekka.config import DEFAULT_CONFIG, Config
-from sekka.tui import ConfigScreen, ConfirmScreen, SekkaApp
+from textual.widgets import Button, Checkbox, Input, Select
+
+from sekka.tui import ConfigScreen, ConfirmScreen, KnowledgeScreen, SekkaApp
 
 
 def make_config(**overrides):
@@ -632,4 +634,26 @@ def test_knowledge_screen_add_enable_and_persist(tmp_path):
 
             screen.query_one("#k_close", Button).press()
             await wait_for(pilot, lambda: not isinstance(app.screen, KnowledgeScreen))
+    asyncio.run(go())
+
+
+def test_config_screen_save_format_and_reasoning_applied(tmp_path):
+    cfg_file = tmp_path / "config.json"
+
+    async def go():
+        values = copy.deepcopy(DEFAULT_CONFIG)
+        app = SekkaApp(Config(values, path=cfg_file))
+        async with app.run_test(size=(110, 40)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfigScreen))
+            screen = app.screen
+            screen.query_one("#cfg_save_format", Select).value = "markdown"
+            screen.query_one("#cfg_reasoning", Select).value = "high"
+            screen.query_one("#config_save", Button).press()
+            await wait_for(pilot, lambda: not isinstance(app.screen, ConfigScreen))
+            assert app.config["save_format"] == "markdown"
+            assert app.config["reasoning"] == "high"
+            saved = json.loads(cfg_file.read_text())
+            assert saved["save_format"] == "markdown" and saved["reasoning"] == "high"
     asyncio.run(go())

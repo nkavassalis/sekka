@@ -226,6 +226,13 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 yield Input(value=_blank_if_none(values.get("history_percent")), id="cfg_history_percent")
                 yield Label("Save directory")
                 yield Input(value=str(values.get("save_dir", ".")), id="cfg_save_dir")
+                yield Label("Save format")
+                yield Select(
+                    [("JSON", "json"), ("Markdown", "markdown")],
+                    value=values.get("save_format", "json"),
+                    allow_blank=False,
+                    id="cfg_save_format",
+                )
                 yield Checkbox("Autosave history after every reply", value=bool(values.get("autosave")), id="cfg_autosave")
             with Vertical(id="config_buttons"):
                 yield Button("Save", id="config_save", variant="primary")
@@ -301,6 +308,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "request_timeout": timeout if timeout is not None else self.config.get("request_timeout", 300),
                 "reasoning": str(self.query_one("#cfg_reasoning", Select).value),
                 "save_dir": self.query_one("#cfg_save_dir", Input).value.strip() or ".",
+                "save_format": str(self.query_one("#cfg_save_format", Select).value),
                 "autosave": bool(self.query_one("#cfg_autosave", Checkbox).value),
             }
         )

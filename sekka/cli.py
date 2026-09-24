@@ -33,6 +33,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="reasoning effort sent to the endpoint (none = don't send)",
     )
     parser.add_argument(
+        "--history-percent",
+        type=int,
+        choices=range(50, 96),
+        metavar="50-95",
+        help="percent of the screen used by the chat history",
+    )
+    parser.add_argument(
+        "--context-window",
+        type=int,
+        help="total context tokens for the meter (default: from the endpoint)",
+    )
+    parser.add_argument(
+        "--context-mode",
+        choices=["pause", "rolling", "compact"],
+        help="what happens when the context window fills",
+    )
+    parser.add_argument("--save-dir", help="where /save and autosave write files")
+    parser.add_argument(
+        "--save-format", choices=["json", "markdown"], help="saved file format"
+    )
+    parser.add_argument(
+        "--autosave",
+        action=argparse.BooleanOptionalAction,
+        help="auto-save history after every reply (--autosave / --no-autosave)",
+    )
+    parser.add_argument(
         "--config",
         help="path to a config file (default: ./.sekka/config.json then ~/.sekka/config.json)",
     )
@@ -50,6 +76,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         "max_tokens": args.max_tokens,
         "request_timeout": args.timeout,
         "reasoning": args.reasoning,
+        "history_percent": args.history_percent,
+        "context_window": args.context_window,
+        "context_mode": args.context_mode,
+        "save_dir": args.save_dir,
+        "save_format": args.save_format,
+        "autosave": args.autosave,
     }
     try:
         config = load_config(overrides, config_path=args.config)

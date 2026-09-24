@@ -66,16 +66,27 @@ Then just type and press **enter**. `/help` lists the in-chat commands.
 ```
 sekka [options]
 
---endpoint URL       OpenAI-compatible base URL, e.g. http://host:8000/v1
---model  MODEL       model id (omit to pick from the endpoint's /models)
---system  TEXT       system prompt
---api-key KEY        bearer token (only needed if the endpoint requires one)
---temperature FLOAT  sampling temperature
---max-tokens N       max tokens to generate
---timeout SECONDS    response timeout, 0 = wait forever (default 300)
---config PATH        use a specific config file
---version            show version
+--endpoint URL         OpenAI-compatible base URL, e.g. http://host:8000/v1
+--model  MODEL         model id (omit to pick from the endpoint's /models)
+--system  TEXT         system prompt
+--api-key KEY          bearer token (only needed if the endpoint requires one)
+--temperature FLOAT    sampling temperature
+--max-tokens N         max tokens to generate
+--timeout SECONDS      response timeout, 0 = wait forever (default 300)
+--reasoning LEVEL      none|minimal|low|medium|high (sent as reasoning_effort)
+--history-percent N    chat history share of the screen (50-95)
+--context-window N     total context tokens for the meter (default: endpoint's)
+--context-mode MODE    pause|rolling|compact when the window fills
+--save-dir DIR         where /save and autosave write files
+--save-format FMT      json|markdown
+--autosave             auto-save after every reply (--no-autosave to force off)
+--config PATH          use a specific config file
+--version              show version
 ```
+
+Every simple config key has a matching flag; the structured keys
+(`labels`, `theme`, `keys`, `knowledge`) live in the config file or the
+`/config`/`/knowledge` screens only.
 
 Environment variables (overridden by CLI flags):
 `SEKKA_ENDPOINT`, `SEKKA_MODEL`, `SEKKA_API_KEY`, `SEKKA_CONFIG`.
