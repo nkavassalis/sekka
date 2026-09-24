@@ -24,7 +24,7 @@ built-in default**.
   "system_prompt": "You are a helpful assistant.",
   "temperature": 0.7,
   "max_tokens": null,
-  "request_timeout": 120,
+  "request_timeout": 300,
   "history_percent": 80,
   "context_window": null,
   "context_mode": "pause",
@@ -58,10 +58,19 @@ built-in default**.
 | `system_prompt`   | string          | "You are a helpful assistant." | Sent as a leading `system` message on every request |
 | `temperature`     | number/null     | `0.7`                         | `null` omits the parameter entirely                |
 | `max_tokens`      | int/null        | `null`                        | `null` omits the parameter                         |
-| `request_timeout` | seconds         | `120`                         | HTTP timeout for chat requests                     |
+| `request_timeout` | seconds/null    | `300`                         | Read timeout per request; `0`/`null` waits forever (connect timeout is fixed at 10 s) |
 | `history_percent` | int (50-95)     | `80`                          | Share of the screen for the chat history; the rest goes to the input editor |
 | `context_window`  | int/null        | `null` (= endpoint's `max_model_len`) | Total context size in tokens shown by the meter; also forces the full-context behaviour |
 | `context_mode`    | `pause`/`rolling`/`compact` | `pause`         | What happens when the context window fills up (see below) |
+
+### Prompt/context caching
+
+Nothing special is needed from sekka: vLLM (automatic prefix caching),
+llama.cpp, SGLang and hosted APIs cache the shared prefix of consecutive
+requests on their own, and sekka keeps the prompt prefix stable
+(append-only history, unchanged system prompt) so those caches hit. Note that
+`rolling`/`compact` modes change the prompt prefix when they trigger, so the
+next request after a roll/compact re-pays the prefill cost.
 
 ### What happens when the context window fills
 

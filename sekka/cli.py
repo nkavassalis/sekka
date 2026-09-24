@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, help="sampling temperature")
     parser.add_argument("--max-tokens", type=int, help="max tokens to generate")
     parser.add_argument(
+        "--timeout",
+        type=float,
+        help="seconds to wait for a response (0 = wait forever); default 300",
+    )
+    parser.add_argument(
         "--config",
         help="path to a config file (default: ./.sekka/config.json then ~/.sekka/config.json)",
     )
@@ -38,6 +43,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "api_key": args.api_key,
         "temperature": args.temperature,
         "max_tokens": args.max_tokens,
+        "request_timeout": args.timeout,
     }
     try:
         config = load_config(overrides, config_path=args.config)

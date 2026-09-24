@@ -61,6 +61,7 @@ sekka [options]
 --api-key KEY        bearer token (only needed if the endpoint requires one)
 --temperature FLOAT  sampling temperature
 --max-tokens N       max tokens to generate
+--timeout SECONDS    response timeout, 0 = wait forever (default 300)
 --config PATH        use a specific config file
 --version            show version
 ```

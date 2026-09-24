@@ -78,6 +78,7 @@ def test_chat_completion_basic(captured):
     assert resp.elapsed >= 0
     call = captured["post"]
     assert call["url"] == "http://h/v1/chat/completions"
+    assert call["timeout"] == (10.0, 120.0)  # (connect, read)
     assert call["json"]["model"] == "m1"
     assert "temperature" not in call["json"]
     assert "max_tokens" not in call["json"]
@@ -120,3 +121,9 @@ def test_html_response_gives_clear_error(captured):
     )
     with pytest.raises(ClientError, match="HTML page, not JSON"):
         list_models("http://h/v1")
+
+
+def test_timeout_zero_means_wait_forever(captured):
+    captured["respond"] = lambda: FakeResponse(200, {"data": []})
+    list_models("http://h/v1", timeout=0)
+    assert captured["get"]["timeout"] == (10.0, None)

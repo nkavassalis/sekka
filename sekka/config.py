@@ -30,7 +30,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "system_prompt": "You are a helpful assistant.",
     "temperature": 0.7,
     "max_tokens": None,
-    "request_timeout": 120,
+    "request_timeout": 300,
     "history_percent": 80,
     "context_window": None,
     "context_mode": "pause",
@@ -142,6 +142,12 @@ def validate_config(values: dict[str, Any]) -> None:
         raise ConfigError(
             f"Config 'context_mode' must be one of {sorted(VALID_CONTEXT_MODES)}."
         )
+
+    timeout = values.get("request_timeout")
+    if timeout is not None and (
+        not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout < 0
+    ):
+        raise ConfigError("Config 'request_timeout' must be null, 0 (wait forever), or a positive number.")
 
     labels = values.get("labels", {})
     for name in ("user", "assistant"):

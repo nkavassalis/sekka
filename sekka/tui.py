@@ -204,6 +204,8 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                     allow_blank=False,
                     id="cfg_context_mode",
                 )
+                yield Label("Request timeout seconds (0 = wait forever)")
+                yield Input(value=_blank_if_none(values.get("request_timeout")), id="cfg_timeout")
                 yield Label("History height % (50-95)")
                 yield Input(value=_blank_if_none(values.get("history_percent")), id="cfg_history_percent")
                 yield Label("Save directory")
@@ -258,6 +260,10 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
             if context_window is not None and context_window < 1024:
                 self.notify("Context window must be at least 1024 tokens.", severity="error")
                 return
+            timeout = _num("cfg_timeout", float)
+            if timeout is not None and timeout < 0:
+                self.notify("Timeout must be 0 (wait forever) or positive.", severity="error")
+                return
         except _ConfigInputError:
             return
 
@@ -276,6 +282,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "history_percent": history_percent if history_percent is not None else self.config.get("history_percent", 80),
                 "context_window": context_window,
                 "context_mode": str(self.query_one("#cfg_context_mode", Select).value),
+                "request_timeout": timeout if timeout is not None else self.config.get("request_timeout", 300),
                 "save_dir": self.query_one("#cfg_save_dir", Input).value.strip() or ".",
                 "autosave": bool(self.query_one("#cfg_autosave", Checkbox).value),
             }
@@ -514,7 +521,7 @@ class SekkaApp(App):
                      f"in at most 150 words:\n\n{transcript}"},
                 ],
                 api_key=cfg.get("api_key", ""), temperature=0.3,
-                timeout=float(cfg.get("request_timeout", 120)),
+                timeout=cfg.get("request_timeout", 300),
             )
         except client.ClientError as exc:
             self._stop_thinking()
@@ -623,7 +630,7 @@ class SekkaApp(App):
                 api_key=cfg.get("api_key", ""),
                 temperature=cfg.get("temperature"),
                 max_tokens=cfg.get("max_tokens"),
-                timeout=float(cfg.get("request_timeout", 120)),
+                timeout=cfg.get("request_timeout", 300),
             )
         except client.ClientError as exc:
             self._stop_thinking()

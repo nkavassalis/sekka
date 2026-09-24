@@ -112,6 +112,16 @@ def test_invalid_save_format_raises():
 def test_context_settings_defaults_and_validation():
     assert DEFAULT_CONFIG["context_window"] is None
     assert DEFAULT_CONFIG["context_mode"] == "pause"
+    assert DEFAULT_CONFIG["request_timeout"] == 300
+    for bad_timeout in (-5, "soon", True):
+        bad = json.loads(json.dumps(DEFAULT_CONFIG))
+        bad["request_timeout"] = bad_timeout
+        with pytest.raises(ConfigError, match="request_timeout"):
+            validate_config(bad)
+    for good_timeout in (None, 0, 600):
+        good = json.loads(json.dumps(DEFAULT_CONFIG))
+        good["request_timeout"] = good_timeout
+        validate_config(good)
     for bad_mode in ("shuffle", "", None, 5):
         bad = json.loads(json.dumps(DEFAULT_CONFIG))
         bad["context_mode"] = bad_mode

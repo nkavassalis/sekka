@@ -55,11 +55,16 @@ def _check_response(resp: requests.Response) -> Any:
         raise ClientError(f"Endpoint returned invalid JSON: {exc}") from exc
 
 
+def _timeout(timeout: Optional[float]) -> tuple:
+    """(connect, read) tuple; read None means 'wait forever'."""
+    return (10.0, float(timeout) if timeout else None)
+
+
 def list_models(endpoint: str, api_key: str = "", timeout: float = 15.0) -> list[ModelInfo]:
     """GET {endpoint}/models and return ModelInfo entries (id + context size if known)."""
     url = _base(endpoint) + "/models"
     try:
-        resp = requests.get(url, headers=_headers(api_key), timeout=timeout)
+        resp = requests.get(url, headers=_headers(api_key), timeout=_timeout(timeout))
     except requests.RequestException as exc:
         raise ClientError(f"Could not reach {url}: {exc}") from exc
     data = _check_response(resp)
@@ -97,7 +102,7 @@ def chat_completion(
     start = time.monotonic()
     try:
         resp = requests.post(
-            url, headers=_headers(api_key), json=payload, timeout=timeout
+            url, headers=_headers(api_key), json=payload, timeout=_timeout(timeout)
         )
     except requests.RequestException as exc:
         raise ClientError(f"Could not reach {url}: {exc}") from exc
