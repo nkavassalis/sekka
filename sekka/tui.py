@@ -16,7 +16,7 @@ from rich.color import Color
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Select, Static, TextArea
@@ -311,17 +311,17 @@ class SekkaApp(App):
     Static.msg-system { color: $sekka-system; }
     Static.msg-stats { color: $sekka-stats; }
     Static.msg-error { color: $sekka-error; }
-    #ctx_status {
-        height: 1;
-        dock: bottom;
-        text-align: right;
-    }
+    #status_row { dock: bottom; height: 1; }
+    #ctx_notice { width: 1fr; }
+    #ctx_status { width: auto; text-align: right; }
     """
 
     def __init__(self, config: Config) -> None:
         self.config = config
         super().__init__()
-        self.chat: list[dict[str, str]] = []  # user/assistant history (no system)
+        self.chat: list[dict[str, str]] = []  # context sent to the model (no system)
+        self.full_chat: list[dict[str, str]] = []  # everything said, for /save
+        self.notice_text = ""
         self.busy = False
         self.context_used = 0  # exact after a reply (usage), else estimate
         self.context_total: Optional[int] = None
@@ -361,8 +361,11 @@ class SekkaApp(App):
                 id="input",
                 soft_wrap=True,
             )
-            # context meter, docked to the bottom of the editor box, right side
-            yield Static(id="ctx_status", classes="msg-stats")
+            # status row docked at the bottom of the editor box:
+            # context notices left, context meter right
+            with Horizontal(id="status_row"):
+                yield Static(id="ctx_notice", classes="msg-stats")
+                yield Static(id="ctx_status", classes="msg-stats")
 
     def on_mount(self) -> None:
         title = "sekka"
@@ -414,6 +417,15 @@ class SekkaApp(App):
         est = estimate_tokens(system) if system else 0
         est += sum(estimate_tokens(m["content"]) for m in self.chat)
         return max(self.context_used, est)
+
+    # -------------------------------------------------------------- ctx status
+
+    def _set_notice(self, text: str) -> None:
+        self.notice_text = text
+        try:
+            self.query_one("#ctx_notice", Static).update(f" {text} " if text else "")
+        except Exception:
+            pass  # before mount
 
     def _update_ctx_label(self) -> None:
         self.ctx_label = f"{format_tokens(self._used_estimate())}/{format_tokens(self.context_total)}"
@@ -507,10 +519,11 @@ class SekkaApp(App):
         except client.ClientError as exc:
             self._stop_thinking()
             self.busy = False
-            self._sys(f"(summary failed: {exc} - rolling old messages instead)")
             dropped = self._roll_context(self._used_estimate() + estimate_tokens(text), limit)
-            if dropped:
-                self._sys(f"(dropped {dropped} oldest message(s) to fit the context window)")
+            self._set_notice(
+                f"summary failed; rolled {dropped} message(s)" if dropped
+                else "summary failed"
+            )
             self._send_chat(text)
             return
         self.chat[:] = [
@@ -519,7 +532,7 @@ class SekkaApp(App):
         self.context_used = 0
         self._stop_thinking()
         self.busy = False
-        self._sys(f"(compacted {len(older)} earlier message(s) into a summary)")
+        self._set_notice(f"compacted {len(older)} message(s) into summary")
         self._update_ctx_label()
         self._send_chat(text)
 
@@ -547,13 +560,14 @@ class SekkaApp(App):
                 if mode == "rolling":
                     dropped = self._roll_context(need, limit)
                     if dropped:
-                        self._sys(f"(dropped {dropped} oldest message(s) to fit the context window)")
+                        self._set_notice(f"dropped {dropped} oldest message(s)")
                 elif mode == "compact":
                     self.busy = True
                     self._start_thinking("compacting")
                     self._compact_then_send(text)
                     return
         self.chat.append({"role": "user", "content": text})
+        self.full_chat.append({"role": "user", "content": text})
         user_label = self.config["labels"]["user"]
         self._append(f"{user_label}:\n{text}", "user")
         self.busy = True
@@ -626,10 +640,11 @@ class SekkaApp(App):
             self.context_used = resp.prompt_tokens + (resp.completion_tokens or 0)
         self._update_ctx_label()
         self.chat.append({"role": "assistant", "content": resp.content})
+        self.full_chat.append({"role": "assistant", "content": resp.content})
         assistant_label = self.config["labels"]["assistant"]
         self._append(f"{assistant_label}:\n{resp.content}", "assistant")
         self._append(format_stats(resp.elapsed, resp.completion_tokens), "stats")
-        if self.config.get("autosave") and self.chat:
+        if self.config.get("autosave") and self.full_chat:
             path = self._save_history()
             self._append(f"(autosaved to {path})", "stats")
         self._history().scroll_end(animate=False)
@@ -662,7 +677,9 @@ class SekkaApp(App):
             for child in list(self._history().children):
                 child.remove()
             self.chat.clear()
+            self.full_chat.clear()
             self.ui_lines.clear()
+            self._set_notice("")
             self._sys("(history cleared)")
         elif command == "models":
             self._ensure_models(refresh=True)
@@ -670,7 +687,7 @@ class SekkaApp(App):
             self.exit()
 
     def _confirm_save(self) -> None:
-        if not self.chat:
+        if not self.full_chat:
             self._sys("Nothing to save.")
             return
         name = storage.timestamp_name(fmt=self.config.get("save_format", "json"))
@@ -681,14 +698,14 @@ class SekkaApp(App):
                 return
             path = self._save_history()
             if path:
-                self._sys(f"Saved {len(self.chat)} messages to {path}")
+                self._sys(f"Saved {len(self.full_chat)} messages to {path}")
 
         self.push_screen(ConfirmScreen(f"Save chat history as {name}?"), done)
 
     def _save_history(self) -> Optional[str]:
         try:
             path = storage.save_history(
-                self.chat,
+                self.full_chat,
                 directory=self.config.get("save_dir", "."),
                 fmt=self.config.get("save_format", "json"),
             )

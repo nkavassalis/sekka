@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 from pathlib import Path
 
 from sekka import client
@@ -174,6 +175,7 @@ def test_escape_cancels_save_confirmation():
         app = SekkaApp(make_config(model="test-model"))
         async with app.run_test(size=(100, 35)) as pilot:
             app.chat.append({"role": "user", "content": "x"})
+            app.full_chat.append({"role": "user", "content": "x"})
             await run_typing(pilot, "/save")
             await pilot.press("enter")
             await wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen))
@@ -279,9 +281,12 @@ def test_unknown_command_reports_error():
 
 
 def fill_chat(app, rounds=6):
+    """Simulate past exchanges: both the model context and the visible log."""
     for i in range(rounds):
-        app.chat.append({"role": "user", "content": "x" * 4000})
-        app.chat.append({"role": "assistant", "content": "y" * 4000})
+        for m in ({"role": "user", "content": "x" * 4000},
+                  {"role": "assistant", "content": "y" * 4000}):
+            app.chat.append(m)
+            app.full_chat.append(m)
 
 
 def test_context_meter_shows_used_and_total():
@@ -332,7 +337,8 @@ def test_rolling_mode_drops_oldest():
                 await run_typing(pilot, "fresh question")
                 await pilot.press("enter")
                 await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "ok")
-                assert "dropped" in history_text(app)
+                assert "dropped" in app.notice_text  # status bar, not chat
+                assert "dropped" not in history_text(app)
                 assert len(app.chat) < 13  # old turns were dropped
                 # the newest exchange survived
                 assert {"role": "user", "content": "fresh question"} in app.chat
@@ -360,7 +366,42 @@ def test_compact_mode_summarizes_old_messages():
                 assert app.chat[0]["role"] == "system"
                 assert app.chat[0]["content"].startswith("[Summary of earlier conversation]")
                 assert "They talked about weather." in app.chat[0]["content"]
-                assert "compacted" in history_text(app)
+                assert "compacted" in app.notice_text
+                assert "compacted" not in history_text(app)
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_save_keeps_messages_that_rolled_out(tmp_path):
+    async def go():
+        def fake_chat(*a, **k):
+            return ChatResponse(content="ok", completion_tokens=5, elapsed=0.5)
+
+        old = client.chat_completion
+        client.chat_completion = fake_chat
+        try:
+            cfg = make_config(model="test-model", context_window=4096,
+                              context_mode="rolling", save_dir=str(tmp_path))
+            app = SekkaApp(cfg)
+            async with app.run_test(size=(90, 30)) as pilot:
+                fill_chat(app)  # 12 messages
+                await run_typing(pilot, "the one that causes rolling")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "ok")
+                assert len(app.chat) < len(app.full_chat)  # context was rolled
+
+                await run_typing(pilot, "/save")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+                app.screen.query_one("#yes").press()
+                await wait_for(pilot, lambda: not isinstance(app.screen, ConfirmScreen))
+
+            saved = list(Path(tmp_path).glob("sekka_*.json"))
+            assert len(saved) == 1
+            payload = json.loads(saved[0].read_text())
+            assert len(payload["messages"]) == 14  # everything said, incl. rolled-out turns
+            assert any(m["content"] == "the one that causes rolling" for m in payload["messages"])
         finally:
             client.chat_completion = old
     asyncio.run(go())
