@@ -1,7 +1,9 @@
 # Sekka
 
-A terminal (TUI) chat client for any **OpenAI-compatible** LLM endpoint
-(vLLM, llama.cpp server, Ollama's OpenAI API, LM Studio, ...).
+A lightweight terminal (TUI) chat client for any **OpenAI-compatible** LLM
+endpoint (vLLM, llama.cpp server, Ollama's OpenAI API, LM Studio, ...).
+Built for lightweight model exploration, simple text knowledge-base chat
+bots, and role playing games.
 
 ```
 ┌──────────────────────────────────────────────┐
