@@ -28,6 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds to wait for a response (0 = wait forever); default 300",
     )
     parser.add_argument(
+        "--reasoning",
+        choices=["none", "minimal", "low", "medium", "high"],
+        help="reasoning effort sent to the endpoint (none = don't send)",
+    )
+    parser.add_argument(
         "--config",
         help="path to a config file (default: ./.sekka/config.json then ~/.sekka/config.json)",
     )
@@ -44,6 +49,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "temperature": args.temperature,
         "max_tokens": args.max_tokens,
         "request_timeout": args.timeout,
+        "reasoning": args.reasoning,
     }
     try:
         config = load_config(overrides, config_path=args.config)

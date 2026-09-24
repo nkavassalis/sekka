@@ -9,7 +9,10 @@ configurable).
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from rich.color import Color
@@ -19,7 +22,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, DirectoryTree, Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from . import client, commands, storage
 from .config import DEFAULT_CONFIG, Config, save_config, validate_config, ConfigError
@@ -206,6 +209,19 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 )
                 yield Label("Request timeout seconds (0 = wait forever)")
                 yield Input(value=_blank_if_none(values.get("request_timeout")), id="cfg_timeout")
+                yield Label("Reasoning effort (none = don't send it)")
+                yield Select(
+                    [
+                        ("none - don't send (models without thinking)", "none"),
+                        ("minimal", "minimal"),
+                        ("low", "low"),
+                        ("medium", "medium"),
+                        ("high", "high"),
+                    ],
+                    value=values.get("reasoning", "medium"),
+                    allow_blank=False,
+                    id="cfg_reasoning",
+                )
                 yield Label("History height % (50-95)")
                 yield Input(value=_blank_if_none(values.get("history_percent")), id="cfg_history_percent")
                 yield Label("Save directory")
@@ -283,6 +299,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "context_window": context_window,
                 "context_mode": str(self.query_one("#cfg_context_mode", Select).value),
                 "request_timeout": timeout if timeout is not None else self.config.get("request_timeout", 300),
+                "reasoning": str(self.query_one("#cfg_reasoning", Select).value),
                 "save_dir": self.query_one("#cfg_save_dir", Input).value.strip() or ".",
                 "autosave": bool(self.query_one("#cfg_autosave", Checkbox).value),
             }
@@ -291,6 +308,161 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
 
 class _ConfigInputError(Exception):
     pass
+
+
+class FileBrowseScreen(ModalScreen[Optional[str]]):
+    """Minimal file browser; starts in the project's .sekka dir when present."""
+
+    DEFAULT_CSS = """
+    FileBrowseScreen { align: center middle; }
+    FileBrowseScreen > Vertical {
+        width: 70%; max-width: 100; height: 80%;
+        padding: 1 2; background: $surface; border: thick $primary;
+    }
+    DirectoryTree { height: 1fr; border: round $secondary; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def __init__(self, start_path: str) -> None:
+        super().__init__()
+        self.start_path = start_path
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Pick a file (enter), browse dirs, esc to cancel:", classes="msg-system")
+            yield DirectoryTree(self.start_path)
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        self.dismiss(str(event.path))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class KnowledgeScreen(ModalScreen[None]):
+    """Manage knowledge files; each enabled entry becomes a read-only tool.
+
+    Security model: the model may only ever read the files listed here, and
+    only via the fixed tool names we generate - the tool takes no arguments,
+    so the model cannot name a file to open. sekka itself does the reading.
+    """
+
+    DEFAULT_CSS = """
+    KnowledgeScreen { align: center middle; }
+    KnowledgeScreen > Vertical {
+        width: 90%; max-width: 110; height: 86%;
+        padding: 1 2; background: $surface; border: thick $primary;
+    }
+    #k_entries { height: auto; max-height: 1fr; min-height: 3; border: round $secondary; }
+    .k_entry { height: auto; }
+    .k_entry Checkbox { width: auto; max-width: 55%; }
+    .k_desc { width: 1fr; color: $sekka-stats; }
+    #k_form_row { height: auto; }
+    #k_path { width: 1fr; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def __init__(self, config: Config) -> None:
+        super().__init__()
+        self.config = config
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(
+                "Knowledge files - each ENABLED entry is offered to the model as a "
+                "read-only tool (requires a tool-calling model). Saved to the config "
+                "file immediately; disabled entries are remembered but not offered.",
+                classes="msg-system",
+            )
+            yield VerticalScroll(id="k_entries")
+            yield Label("File path (name turns green when the file exists)")
+            with Horizontal(id="k_form_row"):
+                yield Input(placeholder=".sekka/credit_card_processing.md", id="k_path")
+                yield Button("browse", id="k_browse", variant="default")
+            yield Label("Description - what is in it and when to use it (this is what convinces the model to call it)")
+            yield Input(placeholder="Full policy for credit card processing at the clinic", id="k_desc")
+            with Horizontal(id="k_close_row"):
+                yield Button("add", id="k_add", variant="primary")
+                yield Button("close", id="k_close", variant="default")
+
+    def on_show(self) -> None:
+        self._refresh_list()
+
+    # -------------------------------------------------------------- list mgmt
+
+    def _entries(self) -> list[dict[str, Any]]:
+        return self.config.setdefault("knowledge", [])
+
+    def _refresh_list(self) -> None:
+        scroll = self.query_one("#k_entries", VerticalScroll)
+        scroll.remove_children()
+        if not self._entries():
+            scroll.mount(Static("(no knowledge files yet)", classes="k_desc"))
+            return
+        for i, entry in enumerate(self._entries()):
+            scroll.mount(
+                Horizontal(
+                    Checkbox(entry["file"], value=bool(entry["enabled"]), id=f"k_en_{i}"),
+                    Static(entry["description"][:60], classes="k_desc"),
+                    Button("x", id=f"k_rm_{i}", variant="error"),
+                    classes="k_entry",
+                )
+            )
+
+    def _persist(self) -> None:
+        try:
+            save_config(self.config)
+        except OSError as exc:
+            self.notify(f"Could not save config: {exc}", severity="error")
+
+    # ---------------------------------------------------------------- events
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        toggle = getattr(event, "toggle_button", None) or getattr(event, "_sender", None)
+        sender_id = getattr(toggle, "id", "") or ""
+        if sender_id.startswith("k_en_"):
+            idx = int(sender_id[len("k_en_"):])
+            self._entries()[idx]["enabled"] = bool(event.value)
+            self._persist()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "k_path":
+            exists = os.path.isfile(os.path.expanduser(event.value.strip()))
+            event.input.styles.color = "green" if exists else None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id or ""
+        if bid == "k_close":
+            self.dismiss(None)
+        elif bid == "k_browse":
+            start = ".sekka" if os.path.isdir(".sekka") else "."
+            self.push_screen(FileBrowseScreen(start), self._got_path)
+        elif bid == "k_add":
+            path = self.query_one("#k_path", Input).value.strip()
+            desc = self.query_one("#k_desc", Input).value.strip()
+            if not path:
+                self.notify("Enter a file path first.", severity="error")
+                return
+            if not os.path.isfile(os.path.expanduser(path)):
+                self.notify("That file does not exist (path must be green).", severity="error")
+                return
+            self._entries().append({"file": path, "description": desc, "enabled": False})
+            self.query_one("#k_path", Input).value = ""
+            self.query_one("#k_desc", Input).value = ""
+            self._refresh_list()
+            self._persist()
+        elif bid.startswith("k_rm_"):
+            idx = int(bid[len("k_rm_"):])
+            del self._entries()[idx]
+            self._refresh_list()
+            self._persist()
+
+    def _got_path(self, path: Optional[str]) -> None:
+        if path:
+            inp = self.query_one("#k_path", Input)
+            inp.value = path
 
 
 class SekkaApp(App):
@@ -318,10 +490,20 @@ class SekkaApp(App):
     Static.msg-system { color: $sekka-system; }
     Static.msg-stats { color: $sekka-stats; }
     Static.msg-error { color: $sekka-error; }
+    Static.msg-reasoning { color: $sekka-stats; text-style: italic; }
+    Static.msg-tool { color: $sekka-system; }
     #status_row { dock: bottom; height: 1; }
     #ctx_notice { width: 1fr; }
     #ctx_status { width: auto; text-align: right; }
     """
+
+    HIDDEN_KINDS = ("reasoning", "tool")
+
+    BINDINGS = [
+        Binding("ctrl+c", "quit_armed", "Quit (twice)", priority=True),
+        Binding("ctrl+t", "toggle_thinking", "Thinking"),
+        Binding("escape", "clear_input", "Clear input"),
+    ]
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -330,6 +512,8 @@ class SekkaApp(App):
         self.full_chat: list[dict[str, str]] = []  # everything said, for /save
         self.notice_text = ""
         self.busy = False
+        self.show_thinking = False  # ctrl+t / /thinking; always off at startup
+        self._quit_arm = 0.0
         self.context_used = 0  # exact after a reply (usage), else estimate
         self.context_total: Optional[int] = None
         self._model_infos: dict[str, client.ModelInfo] = {}
@@ -448,6 +632,8 @@ class SekkaApp(App):
 
     def _append(self, text: str, role: str, log: bool = True) -> Static:
         widget = Static(text, classes=f"msg-{role}")
+        if role in self.HIDDEN_KINDS:
+            widget.styles.display = "block" if self.show_thinking else "none"
         if log:
             self.ui_lines.append((role, text))
         self._history().mount(widget)
@@ -462,6 +648,43 @@ class SekkaApp(App):
 
     def action_history_scroll_down(self) -> None:
         self._history().scroll_page_down(animate=False)
+
+    # ------------------------------------------------------- keys / toggles
+
+    def action_quit_armed(self) -> None:
+        """ctrl+c: copy when text is selected, otherwise quit on 2nd press."""
+        widget = self.focused
+        if isinstance(widget, TextArea):
+            selection = getattr(widget, "selection", None)
+            if selection is not None and not selection.is_empty:
+                try:
+                    widget.action_copy()
+                except Exception:
+                    pass
+                return
+        now = time.monotonic()
+        if now - self._quit_arm <= 2.0:
+            self.exit()
+            return
+        self._quit_arm = now
+        self.notify("Press ctrl+c again to quit", timeout=2.0)
+
+    def action_clear_input(self) -> None:
+        editor = self.query_one("#input", ChatInput)
+        if editor.text:
+            editor.clear()
+
+    def action_toggle_thinking(self) -> None:
+        self.show_thinking = not self.show_thinking
+        for widget in self.query(Static):
+            classes = widget.classes
+            if "msg-reasoning" in classes or "msg-tool" in classes:
+                widget.styles.display = "block" if self.show_thinking else "none"
+        self.notify(
+            "thinking & tool calls shown" if self.show_thinking
+            else "thinking & tool calls hidden",
+            timeout=2.0,
+        )
 
     # -------------------------------------------------------------- submit flow
 
@@ -522,6 +745,7 @@ class SekkaApp(App):
                 ],
                 api_key=cfg.get("api_key", ""), temperature=0.3,
                 timeout=cfg.get("request_timeout", 300),
+                reasoning_effort="none",  # summarizing does not need thinking
             )
         except client.ClientError as exc:
             self._stop_thinking()
@@ -613,25 +837,116 @@ class SekkaApp(App):
             self._thinking.remove()
             self._thinking = None
 
+    # ------------------------------------------------------- knowledge tools
+
+    KNOWLEDGE_TOOL_ROUNDS = 8
+    KNOWLEDGE_MAX_BYTES = 256_000
+
+    def _knowledge_tools(self) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """Build tool schemas from enabled knowledge entries.
+
+        Returns (schemas, {tool_name: resolved_path}). Security: the model can
+        only reach files already listed (and enabled) in the config - tools
+        take no arguments, so it can never name a file to read itself.
+        """
+        schemas: list[dict[str, Any]] = []
+        files: dict[str, str] = {}
+        used: set[str] = set()
+        for i, entry in enumerate(self.config.get("knowledge", [])):
+            if not entry.get("enabled"):
+                continue
+            path = os.path.abspath(os.path.expanduser(entry["file"]))
+            stem = re.sub(r"\W+", "_", Path(entry["file"]).stem).strip("_") or "knowledge"
+            name = f"read_{stem}"
+            if name in used:
+                name = f"{name}_{i}"
+            used.add(name)
+            desc = (entry.get("description") or "").strip() or f"Knowledge file {entry['file']}"
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": f"{desc} Returns the full contents of the file.",
+                        "parameters": {"type": "object", "properties": {}, "required": []},
+                    },
+                }
+            )
+            files[name] = path
+        return schemas, files
+
+    def _read_knowledge_file(self, path: str) -> str:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                data = fh.read(self.KNOWLEDGE_MAX_BYTES + 1)
+        except OSError as exc:
+            return f"Error: the knowledge file could not be read ({exc.strerror or exc})."
+        if len(data) > self.KNOWLEDGE_MAX_BYTES:
+            return data[: self.KNOWLEDGE_MAX_BYTES] + "\n[truncated]"
+        return data
+
+    # ------------------------------------------------------------- chat worker
+
     @work(exclusive=True, group="chat")
     async def _chat_worker(self) -> None:
         cfg = self.config.values
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         system_prompt = (cfg.get("system_prompt") or "").strip()
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.extend(self.chat)
+        tools, tool_files = self._knowledge_tools()
+        rounds = 0
+        total_completion = 0
+        last_prompt: Optional[int] = None
+        last_elapsed = 0.0
         try:
-            resp = await asyncio.to_thread(
-                client.chat_completion,
-                cfg["endpoint"],
-                cfg["model"],
-                messages,
-                api_key=cfg.get("api_key", ""),
-                temperature=cfg.get("temperature"),
-                max_tokens=cfg.get("max_tokens"),
-                timeout=cfg.get("request_timeout", 300),
-            )
+            while True:
+                resp = await asyncio.to_thread(
+                    client.chat_completion,
+                    cfg["endpoint"],
+                    cfg["model"],
+                    messages,
+                    api_key=cfg.get("api_key", ""),
+                    temperature=cfg.get("temperature"),
+                    max_tokens=cfg.get("max_tokens"),
+                    timeout=cfg.get("request_timeout", 300),
+                    tools=tools or None,
+                    reasoning_effort=cfg.get("reasoning", "medium"),
+                )
+                if resp.prompt_tokens is not None:
+                    last_prompt = resp.prompt_tokens
+                total_completion += resp.completion_tokens or 0
+                last_elapsed += resp.elapsed
+                if resp.reasoning.strip():
+                    self._append(
+                        f"{self.config['labels']['assistant']} thinking:\n{resp.reasoning.strip()}",
+                        "reasoning",
+                    )
+                if resp.tool_calls and tool_files and rounds < self.KNOWLEDGE_TOOL_ROUNDS:
+                    rounds += 1
+                    messages.append(
+                        resp.message
+                        if resp.message
+                        else {"role": "assistant", "content": None, "tool_calls": resp.tool_calls}
+                    )
+                    for call in resp.tool_calls:
+                        fn = str((call.get("function") or {}).get("name") or "?")
+                        self._append(f"tool call: {fn}", "tool")
+                        if fn in tool_files:
+                            result = self._read_knowledge_file(tool_files[fn])
+                        else:
+                            # model hallucinated a tool: refuse, do not read anything
+                            result = "Error: unknown tool."
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.get("id", ""),
+                                "content": result,
+                            }
+                        )
+                    continue
+                break
         except client.ClientError as exc:
             self._stop_thinking()
             self.busy = False
@@ -643,8 +958,8 @@ class SekkaApp(App):
 
         self._stop_thinking()
         self.busy = False
-        if resp.prompt_tokens is not None:
-            self.context_used = resp.prompt_tokens + (resp.completion_tokens or 0)
+        if last_prompt is not None:
+            self.context_used = last_prompt + total_completion
         self._update_ctx_label()
         self.chat.append({"role": "assistant", "content": resp.content})
         self.full_chat.append({"role": "assistant", "content": resp.content})
@@ -652,7 +967,7 @@ class SekkaApp(App):
         # models often pad replies with blank lines; don't render them
         shown = resp.content.strip("\n") if resp.content.strip() else resp.content
         self._append(f"{assistant_label}:\n{shown}", "assistant")
-        self._append(format_stats(resp.elapsed, resp.completion_tokens), "stats")
+        self._append(format_stats(last_elapsed, total_completion), "stats")
         if self.config.get("autosave") and self.full_chat:
             path = self._save_history()
             self._append(f"(autosaved to {path})", "stats")
@@ -674,7 +989,9 @@ class SekkaApp(App):
                 f"  {keys['newline']:<9} insert newline",
                 f"  {keys['scroll_up']:<9} scroll history up",
                 f"  {keys['scroll_down']:<9} scroll history down",
-                "  ctrl+q    quit",
+                "  ctrl+c    quit (press twice; copies a selection if one exists)",
+                "  ctrl+t    show/hide model thinking & tool calls",
+                "  escape    clear the input box",
                 "(key bindings and colors are configured in the config file)",
             ]
             self._sys("\n".join(lines))
@@ -692,6 +1009,10 @@ class SekkaApp(App):
             self._sys("(history cleared)")
         elif command == "models":
             self._ensure_models(refresh=True)
+        elif command == "knowledge":
+            self.push_screen(KnowledgeScreen(self.config))
+        elif command == "thinking":
+            self.action_toggle_thinking()
         elif command == "exit":
             self.exit()
 

@@ -34,6 +34,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "history_percent": 80,
     "context_window": None,
     "context_mode": "pause",
+    "reasoning": "medium",
+    "knowledge": [],
     "autosave": False,
     "save_dir": ".",
     "save_format": "json",
@@ -55,6 +57,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 VALID_SAVE_FORMATS = {"json", "markdown"}
 VALID_CONTEXT_MODES = {"pause", "rolling", "compact"}
+VALID_REASONING = {"none", "minimal", "low", "medium", "high"}
 
 
 class ConfigError(Exception):
@@ -82,6 +85,9 @@ class Config:
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.values.get(key, default)
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        return self.values.setdefault(key, default)
 
     @property
     def theme(self) -> dict[str, str]:
@@ -148,6 +154,27 @@ def validate_config(values: dict[str, Any]) -> None:
         not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout < 0
     ):
         raise ConfigError("Config 'request_timeout' must be null, 0 (wait forever), or a positive number.")
+
+    if values.get("reasoning") not in VALID_REASONING:
+        raise ConfigError(
+            f"Config 'reasoning' must be one of {sorted(VALID_REASONING)}."
+        )
+
+    knowledge = values.get("knowledge")
+    if not isinstance(knowledge, list):
+        raise ConfigError("Config 'knowledge' must be a list of entries.")
+    for entry in knowledge:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("file"), str)
+            or not entry["file"].strip()
+            or not isinstance(entry.get("description"), str)
+            or not isinstance(entry.get("enabled"), bool)
+        ):
+            raise ConfigError(
+                "Each 'knowledge' entry needs a non-empty 'file' (str), "
+                "a 'description' (str) and an 'enabled' (bool)."
+            )
 
     labels = values.get("labels", {})
     for name in ("user", "assistant"):

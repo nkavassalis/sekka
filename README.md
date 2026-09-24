@@ -30,6 +30,11 @@ bots, and role playing games.
 - Optional autosave after every reply (off by default)
 - Configurable message colors and key bindings
 - Dark bracketed timing line after each reply: `[1.4s, 38.2 tok/s]`
+- Knowledge files as tools: `/knowledge` turns process docs, character cards,
+  or lore into read-only tools the model can consult (tool-calling models
+  only; the model can never read files you didn't list)
+- Optional thinking overlay (`/thinking`, `ctrl+t`) shows the model's
+  reasoning and tool calls - hidden by default
 - Context meter in the corner of the editor (`45k/262k`) with configurable
   behaviour when the window fills: pause, roll old messages out, or compact
   them into a summary
@@ -37,10 +42,14 @@ bots, and role playing games.
 ## Install
 
 ```bash
-pip install -e .          # from a clone of this repo
+pipx install git+https://github.com/nkavassalis/sekka.git
 ```
 
-Requires Python >= 3.10. Dependencies: `textual`, `requests`.
+(or `uv tool install git+https://github.com/nkavassalis/sekka.git`, or from a
+clone: `pip install -e .`). Requires Python >= 3.10; dependencies: `textual`,
+`requests`. Sekka is pure Python on purpose - the endpoint does the heavy
+lifting, so bundled-binary builds (Nuitka/PyInstaller) would add ~50 MB for
+zero speedup and are deliberately not shipped.
 
 ## Quick start
 
@@ -81,8 +90,10 @@ Configuration precedence: **CLI flags > environment > config file > defaults**.
 | `/save`   | save history to `sekka_YYYYMMDD_HHMMSS.json` (asks first)|
 | `/config` | open the configuration screen (saved to the config file)|
 | `/models` | re-fetch models from the endpoint and pick one          |
+| `/knowledge` | manage knowledge files offered to the model as tools |
+| `/thinking` | show/hide model thinking & tool calls (also **ctrl+t**)|
 | `/clear`  | clear the on-screen and sent chat history               |
-| `/exit`   | quit (also **ctrl+q**)                                  |
+| `/exit`   | quit (also **ctrl+c twice**)                            |
 
 ## Keys
 
@@ -96,10 +107,13 @@ Defaults (configurable via the `keys` block in the config file, see
 | `pageup`    | scroll chat history up          |
 | `pagedown`  | scroll chat history down        |
 | `up/down`   | move cursor inside the input    |
-| `ctrl+q`    | quit                            |
+| `ctrl+c`    | quit - press twice within 2 s (copies a selection if one exists) |
+| `ctrl+t`    | show/hide model thinking & tool calls |
+| `escape`    | clear the input box             |
 
-Note: this version of Textual (the TUI library) rebinds `ctrl+c` to "copy"
-while an editor is focused; `ctrl+q` quits the app.
+Thinking and tool-call lines are hidden by default and always start hidden;
+`/knowledge` files become read-only tools for models that support tool
+calling (see [docs](docs/configuration.md) for the security notes).
 
 ## Files
 

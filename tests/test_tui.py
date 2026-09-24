@@ -427,3 +427,191 @@ def test_save_keeps_messages_that_rolled_out(tmp_path):
         finally:
             client.chat_completion = old
     asyncio.run(go())
+
+
+# ---------------------------------------------------- reasoning + knowledge
+
+
+def test_reasoning_and_knowledge_config_validation():
+    import pytest
+
+    from sekka.config import ConfigError, validate_config
+
+    for good in ("none", "minimal", "low", "medium", "high"):
+        v = json.loads(json.dumps(DEFAULT_CONFIG))
+        v["reasoning"] = good
+        validate_config(v)
+    bad = json.loads(json.dumps(DEFAULT_CONFIG))
+    bad["reasoning"] = "ultra"
+    with pytest.raises(ConfigError, match="reasoning"):
+        validate_config(bad)
+
+    good = json.loads(json.dumps(DEFAULT_CONFIG))
+    good["knowledge"] = [{"file": "a.md", "description": "A thing", "enabled": True}]
+    validate_config(good)
+    for bad_entries in ([{"file": ""}], [{"description": "x"}], [{"file": "a", "description": "d"}], "nope"):
+        bad = json.loads(json.dumps(DEFAULT_CONFIG))
+        bad["knowledge"] = bad_entries
+        with pytest.raises(ConfigError, match="knowledge"):
+            validate_config(bad)
+
+
+def test_knowledge_tools_only_enabled_and_no_args():
+    app = SekkaApp(make_config(model="m", knowledge=[
+        {"file": "docs/credit card policy.md", "description": "CC policy", "enabled": True},
+        {"file": "secret.txt", "description": "nope", "enabled": False},
+    ]))
+    schemas, files = app._knowledge_tools()
+    assert len(schemas) == 1
+    fn = schemas[0]["function"]
+    assert fn["name"] == "read_credit_card_policy"
+    assert "CC policy" in fn["description"]
+    assert fn["parameters"]["properties"] == {}  # model cannot pass a path
+    assert list(files) == ["read_credit_card_policy"]
+    assert files["read_credit_card_policy"].endswith("credit card policy.md")
+    assert "secret" not in json.dumps(files)
+
+
+def test_tool_roundtrip_reads_only_whitelisted_file(tmp_path):
+    good = tmp_path / "kb.md"
+    good.write_text("POLICY BODY")
+
+    async def go():
+        calls = []
+
+        def fake(endpoint, model, messages, **kwargs):
+            calls.append(list(messages))
+            if len(calls) == 1:
+                return ChatResponse(
+                    content="", completion_tokens=5, elapsed=0.1,
+                    tool_calls=[{"id": "c1", "function": {"name": "read_kb", "arguments": json.dumps({"file": "/etc/passwd"})}},
+                                {"id": "c2", "function": {"name": "read_evil", "arguments": "{}"}}],
+                    message={"role": "assistant", "content": None,
+                             "tool_calls": [{"id": "c1", "function": {"name": "read_kb", "arguments": "{}"}},
+                                            {"id": "c2", "function": {"name": "read_evil", "arguments": "{}"}}]},
+                )
+            return ChatResponse(content="answered from KB", completion_tokens=4, elapsed=0.2)
+
+        old = client.chat_completion
+        client.chat_completion = fake
+        try:
+            app = SekkaApp(make_config(
+                model="m",
+                knowledge=[{"file": str(good), "description": "the kb", "enabled": True}],
+            ))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "what is the policy?")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "answered from KB")
+                second = calls[1]
+                tool_msgs = [m for m in second if m.get("role") == "tool"]
+                # whitelisted file returned (arguments ignored - even /etc/passwd)
+                assert any("POLICY BODY" in m["content"] for m in tool_msgs)
+                # hallucinated tool name -> refused, nothing read
+                assert any("unknown tool" in m["content"] for m in tool_msgs)
+                assert "root:" not in json.dumps(second)  # never read an arbitrary file
+                assert "tool call: read_kb" in history_text(app)
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_reasoning_hidden_then_ctrl_t_shows_including_past():
+    async def go():
+        def fake(*a, **k):
+            return ChatResponse(content="answer", reasoning="deep thoughts here",
+                                completion_tokens=3, elapsed=0.5)
+
+        old = client.chat_completion
+        client.chat_completion = fake
+        try:
+            app = SekkaApp(make_config(model="test-model"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hi")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "answer")
+                assert "deep thoughts here" in history_text(app)      # logged
+                assert not app.show_thinking                            # hidden at start
+                from textual.widgets import Static
+                hidden = [w for w in app.query(Static) if "msg-reasoning" in w.classes]
+                assert hidden and all(w.styles.display == "none" for w in hidden)
+
+                await pilot.press("ctrl+t")
+                assert app.show_thinking
+                shown = [w for w in app.query(Static) if "msg-reasoning" in w.classes]
+                assert shown and all(w.styles.display == "block" for w in shown)
+                # toggling back hides *earlier* turns too
+                await pilot.press("ctrl+t")
+                assert all(w.styles.display == "none" for w in app.query(Static) if "msg-reasoning" in w.classes)
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_escape_clears_input():
+    async def go():
+        app = SekkaApp(make_config(model="test-model"))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "draft message")
+            assert app.query_one("#input").text == "draft message"
+            await pilot.press("escape")
+            assert app.query_one("#input").text == ""
+    asyncio.run(go())
+
+
+def test_ctrl_c_needs_two_presses_to_quit():
+    async def go():
+        app = SekkaApp(make_config(model="test-model"))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert not app._exit  # armed but alive
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert app._exit  # second press within the window quits
+    asyncio.run(go())
+
+
+def test_knowledge_screen_add_enable_and_persist(tmp_path):
+    cfg_file = tmp_path / "config.json"
+    kb = tmp_path / "kb.md"
+    kb.write_text("body")
+
+    async def go():
+        from textual.widgets import Button, Checkbox, Input
+
+        from sekka.config import save_config
+        from sekka.tui import KnowledgeScreen
+
+        values = copy.deepcopy(DEFAULT_CONFIG)
+        app = SekkaApp(Config(values, path=cfg_file))
+        async with app.run_test(size=(110, 36)) as pilot:
+            await run_typing(pilot, "/knowledge")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, KnowledgeScreen))
+            screen = app.screen
+
+            screen.query_one("#k_path", Input).value = str(kb)
+            await pilot.pause()
+            from textual.color import Color as TuiColor
+            assert screen.query_one("#k_path", Input).styles.color == TuiColor.parse("green")
+
+            screen.query_one("#k_desc", Input).value = "insurance verification process doc"
+            screen.query_one("#k_add", Button).press()
+            await wait_for(pilot, lambda: len(app.config["knowledge"]) == 1)
+            entry = app.config["knowledge"][0]
+            assert entry["enabled"] is False  # remembered but OFF until ticked
+            assert cfg_file.exists()          # persisted immediately
+
+            # tick the checkbox -> enabled + persisted
+            screen.query_one("#k_en_0", Checkbox).toggle()
+            await pilot.pause()
+            assert app.config["knowledge"][0]["enabled"] is True
+            saved = json.loads(cfg_file.read_text())
+            assert saved["knowledge"][0]["enabled"] is True
+            schemas, _files = app._knowledge_tools()
+            assert len(schemas) == 1
+
+            screen.query_one("#k_close", Button).press()
+            await wait_for(pilot, lambda: not isinstance(app.screen, KnowledgeScreen))
+    asyncio.run(go())

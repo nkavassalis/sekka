@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import requests
@@ -25,6 +25,9 @@ class ChatResponse:
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     elapsed: float = 0.0
+    reasoning: str = ""  # chain-of-thought if the server exposes one
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    message: dict[str, Any] = field(default_factory=dict)  # raw assistant message
 
 
 def _base(endpoint: str) -> str:
@@ -85,11 +88,13 @@ def list_models(endpoint: str, api_key: str = "", timeout: float = 15.0) -> list
 def chat_completion(
     endpoint: str,
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     api_key: str = "",
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     timeout: float = 120.0,
+    tools: Optional[list[dict[str, Any]]] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> ChatResponse:
     """POST {endpoint}/chat/completions and return content + usage + timing."""
     url = _base(endpoint) + "/chat/completions"
@@ -98,6 +103,11 @@ def chat_completion(
         payload["temperature"] = temperature
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if reasoning_effort and reasoning_effort != "none":
+        payload["reasoning_effort"] = reasoning_effort
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
 
     start = time.monotonic()
     try:
@@ -113,14 +123,22 @@ def chat_completion(
         choices = data.get("choices") or []
         if not choices:
             raise ClientError("Endpoint returned no choices.")
-        content = choices[0]["message"]["content"]
+        message = choices[0]["message"]
+        if not isinstance(message, dict):
+            raise ClientError("Endpoint returned a non-object message.")
+        content = message.get("content")
     except (KeyError, IndexError, TypeError) as exc:
         raise ClientError(f"Unexpected response shape: {exc}") from exc
 
     usage = data.get("usage") or {}
+    tool_calls = message.get("tool_calls")
+    reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
     return ChatResponse(
-        content=content if isinstance(content, str) else str(content),
+        content=content if isinstance(content, str) else (str(content) if content else ""),
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
         elapsed=elapsed,
+        reasoning=reasoning if isinstance(reasoning, str) else "",
+        tool_calls=tool_calls if isinstance(tool_calls, list) else [],
+        message=message,
     )

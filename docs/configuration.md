@@ -28,6 +28,12 @@ built-in default**.
   "history_percent": 80,
   "context_window": null,
   "context_mode": "pause",
+  "reasoning": "medium",
+  "knowledge": [
+    {"file": ".sekka/credit_card_processing.md",
+     "description": "Full policy for credit card processing at the clinic",
+     "enabled": true}
+  ],
   "autosave": false,
   "save_dir": ".",
   "save_format": "json",
@@ -62,6 +68,8 @@ built-in default**.
 | `history_percent` | int (50-95)     | `80`                          | Share of the screen for the chat history; the rest goes to the input editor |
 | `context_window`  | int/null        | `null` (= endpoint's `max_model_len`) | Total context size in tokens shown by the meter; also forces the full-context behaviour |
 | `context_mode`    | `pause`/`rolling`/`compact` | `pause`         | What happens when the context window fills up (see below) |
+| `reasoning`       | `none`/`minimal`/`low`/`medium`/`high` | `medium` | Reasoning effort sent to thinking models as `reasoning_effort`; `none` omits the parameter for models that don't support it |
+| `knowledge`       | list of entries | `[]`                          | Files offered to the model as read-only tools (see "Knowledge files") |
 
 ### Prompt/context caching
 
@@ -71,6 +79,40 @@ requests on their own, and sekka keeps the prompt prefix stable
 (append-only history, unchanged system prompt) so those caches hit. Note that
 `rolling`/`compact` modes change the prompt prefix when they trigger, so the
 next request after a roll/compact re-pays the prefill cost.
+
+### Knowledge files (`/knowledge`)
+
+`/knowledge` opens a screen where you list files plus descriptions and tick
+which ones are active. Each **enabled** entry is offered to the model as one
+read-only tool (one tool per file, named after the file). Use it for process
+docs ("credit card processing", "insurance verification"), character cards,
+location lore for RPGs - anything the model should be able to look up.
+
+- **Requires a tool-calling model.** Models without tool support simply ignore
+  the tools (or error, depending on the server). Reasoning-only or plain
+  models won't use knowledge files.
+- **Entries are disabled until you tick them**, and the enabled/disabled state
+  is saved to the config file immediately - restarting sekka in the same
+  directory with the same config remembers what was on.
+- **The description is the sales pitch.** The model decides whether to call a
+  tool purely from its description. Write what is in the file and *when* to
+  reach for it: "Full step-by-step policy for credit card processing at the
+  clinic - call this before answering any payment question" beats "policy doc".
+- **Security - no arbitrary file reads.** sekka registers one fixed tool per
+  listed file and the tools take **no parameters**. The model can only trigger
+  reads of files you listed and enabled; it cannot name a file, pass a path,
+  or influence which file is read in any way. sekka itself does the reading
+  (UTF-8, max 256 KB) and feeds the contents back as the tool result.
+  Unknown/hallucinated tool names are refused without touching the disk.
+
+### Thinking & tool calls (`/thinking`, `ctrl+t`)
+
+Reasoning content (`reasoning_content`/`reasoning` in the API response) and
+tool-call activity are recorded but **hidden by default** and always hidden at
+startup. `ctrl+t` or `/thinking` toggles the overlay; it also
+shows/hides the thinking and tool lines from **earlier turns** already on
+screen. Nothing about the display mode changes what is sent to the model or
+what `/save` writes.
 
 ### What happens when the context window fills
 

@@ -65,9 +65,7 @@
 </div>
 
 <h2>Install</h2>
-<pre><code>git clone https://github.com/nkavassalis/sekka.git
-cd sekka
-pip install -e .</code></pre>
+<pre><code>pipx install git+https://github.com/nkavassalis/sekka.git</code></pre>
 
 <h2>Run</h2>
 <pre><code>sekka --endpoint http://my-vllm-box:8000/v1</code></pre>
@@ -91,8 +89,10 @@ can also live in <code>.sekka/config.json</code> or be edited in-app with <code>
   <tr><td><code>/save</code></td><td>save history to a timestamped file (asks first)</td></tr>
   <tr><td><code>/config</code></td><td>in-app configuration screen</td></tr>
   <tr><td><code>/models</code></td><td>re-fetch models and pick one</td></tr>
+  <tr><td><code>/knowledge</code></td><td>attach knowledge files as read-only tools for the model</td></tr>
+  <tr><td><code>/thinking</code></td><td>show/hide model thinking &amp; tool calls (<code>ctrl+t</code>)</td></tr>
   <tr><td><code>/clear</code></td><td>clear the chat</td></tr>
-  <tr><td><code>/exit</code></td><td>quit (<code>ctrl+q</code> also works)</td></tr>
+  <tr><td><code>/exit</code></td><td>quit (<code>ctrl+c</code> twice also works)</td></tr>
 </table>
 
 <h2>Why “sekka”?</h2>

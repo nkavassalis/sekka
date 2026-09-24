@@ -11,6 +11,8 @@ COMMAND_ALIASES = {
     "config": "config",
     "clear": "clear",
     "models": "models",
+    "knowledge": "knowledge",
+    "thinking": "thinking",
     "exit": "exit",
     "quit": "exit",
     "q": "exit",
@@ -21,8 +23,10 @@ COMMAND_HELP = [
     ("/save", "save the chat history (asks for confirmation)"),
     ("/config", "open the configuration screen"),
     ("/models", "pick a model from the endpoint"),
+    ("/knowledge", "attach knowledge files as tools for the model"),
+    ("/thinking", "show/hide model thinking and tool calls (ctrl+t)"),
     ("/clear", "clear the chat history"),
-    ("/exit", "quit sekka (same as ctrl+c)"),
+    ("/exit", "quit sekka (same as ctrl+c twice)"),
 ]
 
 

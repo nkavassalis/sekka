@@ -127,3 +127,34 @@ def test_timeout_zero_means_wait_forever(captured):
     captured["respond"] = lambda: FakeResponse(200, {"data": []})
     list_models("http://h/v1", timeout=0)
     assert captured["get"]["timeout"] == (10.0, None)
+
+
+def test_reasoning_and_tools_payload_and_parse(captured):
+    captured["respond"] = lambda: FakeResponse(200, {
+        "choices": [{"message": {
+            "role": "assistant", "content": None,
+            "reasoning_content": "I should call the tool",
+            "tool_calls": [{"id": "c1", "function": {"name": "read_policy", "arguments": "{}"}}],
+        }}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    })
+    resp = chat_completion(
+        "http://h/v1", "m", [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function"}], reasoning_effort="low",
+    )
+    sent = captured["post"]["json"]
+    assert sent["reasoning_effort"] == "low"
+    assert sent["tools"] == [{"type": "function"}]
+    assert sent["tool_choice"] == "auto"
+    assert resp.tool_calls[0]["function"]["name"] == "read_policy"
+    assert resp.reasoning == "I should call the tool"
+    assert resp.content == ""
+
+
+def test_reasoning_none_is_not_sent(captured):
+    captured["respond"] = lambda: FakeResponse(200, {
+        "choices": [{"message": {"role": "assistant", "content": "hi"}}]})
+    chat_completion("http://h/v1", "m", [], reasoning_effort="none")
+    assert "reasoning_effort" not in captured["post"]["json"]
+    chat_completion("http://h/v1", "m", [], reasoning_effort="high")
+    assert captured["post"]["json"]["reasoning_effort"] == "high"
