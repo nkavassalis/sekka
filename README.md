@@ -152,3 +152,7 @@ Layout: `sekka/config.py` (layered config), `sekka/client.py` (HTTP),
 *sekka* 雪華: each chat crystallises one exchange at a time.
 
 Built by [Qwen 3.8 Flash Next](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4). ⚡🇨🇦
+
+## License
+
+MIT - see [LICENSE](LICENSE).
