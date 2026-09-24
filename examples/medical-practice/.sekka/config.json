@@ -1,0 +1,36 @@
+{
+  "endpoint": "http://localhost:8000/v1",
+  "model": "",
+  "system_prompt": "You are the front-desk assistant for Ridgeline Family Medicine, a small hypothetical practice. Answer staff questions strictly from the practice procedure documents available as tools: identify which procedure applies, call its tool, and follow it step by step. Always quote the exact form names, timeframes, and escalation steps from the document - never invent policy. If no procedure covers the question, say so and recommend asking the practice manager. If a patient describes emergency symptoms, stop and apply the triage document immediately. All data in this system is fictional demonstration data; remind staff that real patient information must never be entered into this tool.",
+  "temperature": 0.2,
+  "reasoning": "low",
+  "context_mode": "rolling",
+  "labels": {"user": "Staff", "assistant": "FrontDesk"},
+  "knowledge": [
+    {
+      "file": "knowledge/patient-check-in.md",
+      "description": "Same-day check-in procedure: identity verification, insurance card scan, intake tablet, co-pay collection, and provider delay notices. Call for any question about a patient arriving today or what to do at the front desk.",
+      "enabled": true
+    },
+    {
+      "file": "knowledge/insurance-verification.md",
+      "description": "Insurance eligibility and benefit verification workflow: payer portal steps, what to check, effective-date handling, self-pay conversion, and when to escalate to billing. Call before any appointment if coverage is unconfirmed, expired, or disputed.",
+      "enabled": true
+    },
+    {
+      "file": "knowledge/payment-processing.md",
+      "description": "Card-on-file and payment policy: consent language, stored-card authorization, refunds, and what must never be written down. Call for any co-pay collection, card storage, or refund question.",
+      "enabled": true
+    },
+    {
+      "file": "knowledge/prescription-refills.md",
+      "description": "Refill and prescription request routing: intake fields, controlled-substance rules, 72-hour windows, after-hours line, and prescriber escalation. Call for any refill request or prescription status question.",
+      "enabled": true
+    },
+    {
+      "file": "knowledge/emergency-triage.md",
+      "description": "URGENT: symptom-to-action triage chart. Call IMMEDIATELY whenever a patient or caller describes chest pain, breathing difficulty, stroke signs, severe bleeding, or overdose - before answering anything else.",
+      "enabled": true
+    }
+  ]
+}
