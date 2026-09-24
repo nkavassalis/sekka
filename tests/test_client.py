@@ -38,8 +38,12 @@ def captured(monkeypatch):
 
 
 def test_list_models(captured):
-    captured["respond"] = lambda: FakeResponse(200, {"data": [{"id": "a"}, {"id": "b"}, {"nope": 1}]})
-    assert list_models("http://host:8000/v1/") == ["a", "b"]
+    captured["respond"] = lambda: FakeResponse(200, {"data": [
+        {"id": "a", "max_model_len": 262144}, {"id": "b"}, {"nope": 1}]})
+    models = list_models("http://host:8000/v1/")
+    assert [m.id for m in models] == ["a", "b"]
+    assert models[0].max_model_len == 262144
+    assert models[1].max_model_len is None
     assert captured["get"]["url"] == "http://host:8000/v1/models"
 
 

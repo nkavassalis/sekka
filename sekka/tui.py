@@ -19,11 +19,11 @@ from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from . import client, commands, storage
 from .config import DEFAULT_CONFIG, Config, save_config, validate_config, ConfigError
-from .stats import format_stats
+from .stats import estimate_tokens, format_stats, format_tokens
 
 
 def _hex(color: str) -> str:
@@ -191,6 +191,19 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 yield Input(value=_blank_if_none(values.get("temperature")), id="cfg_temperature")
                 yield Label("Max tokens (blank = endpoint default)")
                 yield Input(value=_blank_if_none(values.get("max_tokens")), id="cfg_max_tokens")
+                yield Label("Context window tokens (blank = from endpoint)")
+                yield Input(value=_blank_if_none(values.get("context_window")), id="cfg_context_window")
+                yield Label("When the context window fills")
+                yield Select(
+                    [
+                        ("Pause - block new messages", "pause"),
+                        ("Rolling - drop oldest messages", "rolling"),
+                        ("Compact - summarize old messages", "compact"),
+                    ],
+                    value=values.get("context_mode", "pause"),
+                    allow_blank=False,
+                    id="cfg_context_mode",
+                )
                 yield Label("History height % (50-95)")
                 yield Input(value=_blank_if_none(values.get("history_percent")), id="cfg_history_percent")
                 yield Label("Save directory")
@@ -241,6 +254,10 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
             if history_percent is not None and not 50 <= history_percent <= 95:
                 self.notify("History height % must be between 50 and 95.", severity="error")
                 return
+            context_window = _num("cfg_context_window", int)
+            if context_window is not None and context_window < 1024:
+                self.notify("Context window must be at least 1024 tokens.", severity="error")
+                return
         except _ConfigInputError:
             return
 
@@ -257,6 +274,8 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "history_percent": history_percent if history_percent is not None else self.config.get("history_percent", 80),
+                "context_window": context_window,
+                "context_mode": str(self.query_one("#cfg_context_mode", Select).value),
                 "save_dir": self.query_one("#cfg_save_dir", Input).value.strip() or ".",
                 "autosave": bool(self.query_one("#cfg_autosave", Checkbox).value),
             }
@@ -292,6 +311,11 @@ class SekkaApp(App):
     Static.msg-system { color: $sekka-system; }
     Static.msg-stats { color: $sekka-stats; }
     Static.msg-error { color: $sekka-error; }
+    #ctx_status {
+        height: 1;
+        dock: bottom;
+        text-align: right;
+    }
     """
 
     def __init__(self, config: Config) -> None:
@@ -299,8 +323,13 @@ class SekkaApp(App):
         super().__init__()
         self.chat: list[dict[str, str]] = []  # user/assistant history (no system)
         self.busy = False
+        self.context_used = 0  # exact after a reply (usage), else estimate
+        self.context_total: Optional[int] = None
+        self._model_infos: dict[str, client.ModelInfo] = {}
+        self.ctx_label = ""
         self._thinking: Optional[Static] = None
         self._thinking_frame = 0
+        self._thinking_label = ""
         self._thinking_started = 0.0
         self._thinking_timer = None
         self.ui_lines: list[tuple[str, str]] = []  # (role, text) log, handy for tests
@@ -332,6 +361,8 @@ class SekkaApp(App):
                 id="input",
                 soft_wrap=True,
             )
+            # context meter, docked to the bottom of the editor box, right side
+            yield Static(id="ctx_status", classes="msg-stats")
 
     def on_mount(self) -> None:
         title = "sekka"
@@ -349,6 +380,47 @@ class SekkaApp(App):
         )
         if not model:
             self._ensure_models(refresh=False)
+        elif not self.config.get("context_window"):
+            self._fetch_context_size(model)
+        self._apply_context_total()
+        self._update_ctx_label()
+
+    @work(exclusive=True, group="models")
+    async def _fetch_context_size(self, model: str) -> None:
+        """Silently fetch model metadata so the meter knows the context size."""
+        cfg = self.config.values
+        try:
+            models = await asyncio.to_thread(
+                client.list_models, cfg["endpoint"], cfg.get("api_key", "")
+            )
+        except client.ClientError:
+            return  # meter stays '?/' - not fatal
+        self._model_infos = {m.id: m for m in models}
+        self._apply_context_total()
+        self._update_ctx_label()
+
+    # ------------------------------------------------------------- context meter
+
+    def _context_limit(self) -> Optional[int]:
+        """Token budget for conversation content, reserving room for the reply."""
+        total = self.context_total
+        if not total:
+            return None
+        reserve = max(256, total // 10)
+        return total - reserve
+
+    def _used_estimate(self) -> int:
+        system = (self.config["system_prompt"] or "").strip()
+        est = estimate_tokens(system) if system else 0
+        est += sum(estimate_tokens(m["content"]) for m in self.chat)
+        return max(self.context_used, est)
+
+    def _update_ctx_label(self) -> None:
+        self.ctx_label = f"{format_tokens(self._used_estimate())}/{format_tokens(self.context_total)}"
+        try:
+            self.query_one("#ctx_status", Static).update(f" {self.ctx_label} ")
+        except Exception:
+            pass  # before mount
 
     # ------------------------------------------------------------- ui helpers
 
@@ -388,6 +460,69 @@ class SekkaApp(App):
         else:
             self._handle_command(parsed.name)
 
+    def _roll_context(self, need: int, limit: int) -> int:
+        """Drop oldest turns (keeping the latest exchange) until the budget fits."""
+        dropped = 0
+        while len(self.chat) > 2 and need > limit:
+            removed = self.chat.pop(0)
+            need -= estimate_tokens(removed["content"])
+            dropped += 1
+        self.context_used = 0  # exact count of the old window is stale now
+        self._update_ctx_label()
+        return dropped
+
+    @work(exclusive=True, group="chat")
+    async def _compact_then_send(self, text: str) -> None:
+        cfg = self.config.values
+        limit = self._context_limit() or 0
+        keep_budget = max(512, limit // 2)
+        tail_start = len(self.chat)
+        acc = estimate_tokens(text)
+        while tail_start > 0:
+            cost = estimate_tokens(self.chat[tail_start - 1]["content"])
+            if acc + cost > keep_budget and len(self.chat) - tail_start >= 2:
+                break
+            acc += cost
+            tail_start -= 1
+        older, newer = self.chat[:tail_start], self.chat[tail_start:]
+        if not older:  # nothing worth summarizing; just proceed
+            self._stop_thinking()
+            self.busy = False
+            self._send_chat(text)
+            return
+        transcript = "\n".join(f"{m['role']}: {m['content']}" for m in older)
+        try:
+            resp = await asyncio.to_thread(
+                client.chat_completion,
+                cfg["endpoint"], cfg["model"],
+                [
+                    {"role": "system", "content": "You compress conversations."},
+                    {"role": "user", "content":
+                     "Summarize the following conversation so it can continue seamlessly, "
+                     f"in at most 150 words:\n\n{transcript}"},
+                ],
+                api_key=cfg.get("api_key", ""), temperature=0.3,
+                timeout=float(cfg.get("request_timeout", 120)),
+            )
+        except client.ClientError as exc:
+            self._stop_thinking()
+            self.busy = False
+            self._sys(f"(summary failed: {exc} - rolling old messages instead)")
+            dropped = self._roll_context(self._used_estimate() + estimate_tokens(text), limit)
+            if dropped:
+                self._sys(f"(dropped {dropped} oldest message(s) to fit the context window)")
+            self._send_chat(text)
+            return
+        self.chat[:] = [
+            {"role": "system", "content": "[Summary of earlier conversation]\n" + resp.content.strip()}
+        ] + newer
+        self.context_used = 0
+        self._stop_thinking()
+        self.busy = False
+        self._sys(f"(compacted {len(older)} earlier message(s) into a summary)")
+        self._update_ctx_label()
+        self._send_chat(text)
+
     def _send_chat(self, text: str) -> None:
         if self.busy:
             self.notify("Still waiting for the current reply.", severity="warning")
@@ -396,6 +531,28 @@ class SekkaApp(App):
         if not model:
             self._sys("No model selected. Use /models or /config first.", error=True)
             return
+        limit = self._context_limit()
+        if limit:
+            need = self._used_estimate() + estimate_tokens(text)
+            if need > limit:
+                mode = self.config["context_mode"]
+                if mode == "pause":
+                    self._sys(
+                        f"Context window full ({format_tokens(need)}/{format_tokens(self.context_total)} tokens).\n"
+                        "Options: /save then /clear, or switch context_mode to "
+                        "'rolling'/'compact' in /config.",
+                        error=True,
+                    )
+                    return
+                if mode == "rolling":
+                    dropped = self._roll_context(need, limit)
+                    if dropped:
+                        self._sys(f"(dropped {dropped} oldest message(s) to fit the context window)")
+                elif mode == "compact":
+                    self.busy = True
+                    self._start_thinking("compacting")
+                    self._compact_then_send(text)
+                    return
         self.chat.append({"role": "user", "content": text})
         user_label = self.config["labels"]["user"]
         self._append(f"{user_label}:\n{text}", "user")
@@ -410,10 +567,14 @@ class SekkaApp(App):
     def _thinking_text(self) -> str:
         glyph = self.SNOWFLAKE_FRAMES[self._thinking_frame % len(self.SNOWFLAKE_FRAMES)]
         elapsed = time.monotonic() - self._thinking_started
+        label = self._thinking_label
+        if label:
+            return f"{glyph}  {label} {elapsed:.0f}s"
         return f"{glyph}  {elapsed:.0f}s"
 
-    def _start_thinking(self) -> None:
+    def _start_thinking(self, label: str = "") -> None:
         self._thinking_frame = 0
+        self._thinking_label = label
         self._thinking_started = time.monotonic()
         self._thinking = self._append(self._thinking_text(), "stats", log=False)
         self._thinking_timer = self.set_interval(0.15, self._advance_thinking)
@@ -456,10 +617,14 @@ class SekkaApp(App):
             self._sys(f"Error: {exc}", error=True)
             # roll back the unanswered user turn so history stays consistent
             self.chat.pop()
+            self._update_ctx_label()
             return
 
         self._stop_thinking()
         self.busy = False
+        if resp.prompt_tokens is not None:
+            self.context_used = resp.prompt_tokens + (resp.completion_tokens or 0)
+        self._update_ctx_label()
         self.chat.append({"role": "assistant", "content": resp.content})
         assistant_label = self.config["labels"]["assistant"]
         self._append(f"{assistant_label}:\n{resp.content}", "assistant")
@@ -551,6 +716,10 @@ class SekkaApp(App):
             self._sys(f"Configuration saved to {written}")
         if values.get("model"):
             self.title = f"sekka - {values['model']}"
+        self._apply_context_total()
+        self._update_ctx_label()
+        if not self.config.get("context_window") and self.config["model"]:
+            self._fetch_context_size(self.config["model"])
         self.query_one("#input", ChatInput).set_keymap(self.config.keys)
         self.refresh_css()
 
@@ -567,13 +736,15 @@ class SekkaApp(App):
         except client.ClientError as exc:
             self._sys(f"Could not fetch models: {exc}\nSet a model with --model or /config.", error=True)
             return
-        if not models:
+        self._model_infos = {m.id: m for m in models}
+        ids = [m.id for m in models]
+        if not ids:
             self._sys("Endpoint reported no models. Set one with --model or /config.", error=True)
             return
-        if len(models) == 1:
-            self._select_model(models[0])
+        if len(ids) == 1:
+            self._select_model(ids[0])
             return
-        chosen = await self.push_screen_wait(ModelScreen(models))
+        chosen = await self.push_screen_wait(ModelScreen(ids))
         if chosen:
             self._select_model(chosen)
         elif refresh:
@@ -582,7 +753,18 @@ class SekkaApp(App):
     def _select_model(self, model: str) -> None:
         self.config["model"] = model
         self.title = f"sekka - {model}"
+        self._apply_context_total()
         self._sys(f"Model selected: {model}")
+
+    def _apply_context_total(self) -> None:
+        """Context size: explicit config wins, else the endpoint's max_model_len."""
+        window = self.config.get("context_window")
+        if window:
+            self.context_total = window
+            return
+        info = self._model_infos.get(self.config["model"])
+        self.context_total = info.max_model_len if info else None
+        self._update_ctx_label()
 
 
 def _blank_if_none(value: Any) -> str:

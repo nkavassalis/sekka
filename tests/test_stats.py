@@ -1,4 +1,10 @@
-from sekka.stats import format_duration, format_stats, tokens_per_second
+from sekka.stats import (
+    estimate_tokens,
+    format_duration,
+    format_stats,
+    format_tokens,
+    tokens_per_second,
+)
 
 
 def test_tokens_per_second_basic():
@@ -25,3 +31,18 @@ def test_format_stats_full():
 def test_format_stats_missing_tokens():
     assert format_stats(1.5, None) == "[1.5s, ? tok/s]"
     assert format_stats(1.5, 0) == "[1.5s, ? tok/s]"
+
+
+def test_format_tokens():
+    assert format_tokens(None) == "?"
+    assert format_tokens(0) == "0"
+    assert format_tokens(812) == "812"
+    assert format_tokens(1000) == "1k"
+    assert format_tokens(45312) == "45k"
+    assert format_tokens(262144) == "262k"
+
+
+def test_estimate_tokens():
+    assert estimate_tokens("") == 1
+    assert estimate_tokens("abcd") == 1
+    assert estimate_tokens("x" * 400) == 100

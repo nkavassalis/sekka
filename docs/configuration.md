@@ -26,6 +26,8 @@ built-in default**.
   "max_tokens": null,
   "request_timeout": 120,
   "history_percent": 80,
+  "context_window": null,
+  "context_mode": "pause",
   "autosave": false,
   "save_dir": ".",
   "save_format": "json",
@@ -58,6 +60,24 @@ built-in default**.
 | `max_tokens`      | int/null        | `null`                        | `null` omits the parameter                         |
 | `request_timeout` | seconds         | `120`                         | HTTP timeout for chat requests                     |
 | `history_percent` | int (50-95)     | `80`                          | Share of the screen for the chat history; the rest goes to the input editor |
+| `context_window`  | int/null        | `null` (= endpoint's `max_model_len`) | Total context size in tokens shown by the meter; also forces the full-context behaviour |
+| `context_mode`    | `pause`/`rolling`/`compact` | `pause`         | What happens when the context window fills up (see below) |
+
+### What happens when the context window fills
+
+The bottom-right meter shows the conversation size (exact token counts from the
+API when available, otherwise a ~4-chars-per-token estimate). When a new
+message would run past the window (a ~10% reply reserve is kept), sekka acts
+according to `context_mode`:
+
+- **`pause`** (default) — refuses the message and suggests `/save` + `/clear`
+  or switching modes. Nothing is ever silently lost.
+- **`rolling`** — drops the oldest turns (always keeping the current exchange)
+  and notes how many were dropped.
+- **`compact`** — asks the model to summarize the older turns into a single
+  system message, keeps the recent tail, and continues. The on-screen history
+  is not rewritten, only what gets sent to the model. If the summary request
+  fails, sekka falls back to rolling for that turn.
 | `labels.user`     | string          | `"You"`                       | Name shown before your messages (1–30 chars)       |
 | `labels.assistant`| string          | `"Assistant"`                 | Name shown before replies (also editable in `/config`) |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |

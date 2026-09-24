@@ -30,3 +30,17 @@ def format_stats(elapsed: float, completion_tokens: Optional[int]) -> str:
     else:
         parts.append(f"{tps:.1f} tok/s")
     return f"[{', '.join(parts)}]"
+
+
+def format_tokens(n: Optional[int]) -> str:
+    """Compact token counts: 262144 -> '262k', 812 -> '812', None -> '?'."""
+    if n is None:
+        return "?"
+    if n >= 1000:
+        return f"{n / 1000:.0f}k"
+    return str(n)
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap character-based token estimate (~4 chars/token)."""
+    return max(1, (len(text) + 3) // 4)

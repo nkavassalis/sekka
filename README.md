@@ -28,6 +28,9 @@ A terminal (TUI) chat client for any **OpenAI-compatible** LLM endpoint
 - Optional autosave after every reply (off by default)
 - Configurable message colors and key bindings
 - Dark bracketed timing line after each reply: `[1.4s, 38.2 tok/s]`
+- Context meter in the corner of the editor (`45k/262k`) with configurable
+  behaviour when the window fills: pause, roll old messages out, or compact
+  them into a summary
 
 ## Install
 

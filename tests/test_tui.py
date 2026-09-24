@@ -3,7 +3,7 @@ import copy
 from pathlib import Path
 
 from sekka import client
-from sekka.client import ChatResponse
+from sekka.client import ChatResponse, ModelInfo
 from sekka.config import DEFAULT_CONFIG, Config
 from sekka.tui import ConfigScreen, ConfirmScreen, SekkaApp
 
@@ -113,12 +113,13 @@ def test_error_response_rolls_back_user_turn():
 def test_single_model_is_auto_selected():
     async def go():
         original = client.list_models
-        client.list_models = lambda *a, **k: ["only-model"]
+        client.list_models = lambda *a, **k: [ModelInfo("only-model", 262144)]
         try:
             app = SekkaApp(make_config(model=""))  # no model -> query endpoint
             async with app.run_test(size=(90, 30)) as pilot:
                 await wait_for(pilot, lambda: app.config["model"] == "only-model")
                 assert app.title.endswith("only-model")
+                assert app.context_total == 262144  # picked up max_model_len
         finally:
             client.list_models = original
     asyncio.run(go())
@@ -271,4 +272,95 @@ def test_unknown_command_reports_error():
             await pilot.press("enter")
             await pilot.pause()
             assert "Unknown command" in history_text(app)
+    asyncio.run(go())
+
+
+# ---- context meter & full-context strategies ----
+
+
+def fill_chat(app, rounds=6):
+    for i in range(rounds):
+        app.chat.append({"role": "user", "content": "x" * 4000})
+        app.chat.append({"role": "assistant", "content": "y" * 4000})
+
+
+def test_context_meter_shows_used_and_total():
+    async def go():
+        def fake_chat(*a, **k):
+            return ChatResponse(content="fine", prompt_tokens=100, completion_tokens=20, elapsed=1.0)
+
+        old_chat, old_models = client.chat_completion, client.list_models
+        client.chat_completion = fake_chat
+        client.list_models = lambda *a, **k: [ModelInfo("only-model", 262144)]
+        try:
+            app = SekkaApp(make_config(model=""))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await wait_for(pilot, lambda: app.config["model"] == "only-model")
+                await run_typing(pilot, "hi")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                assert app.ctx_label == "120/262k"
+        finally:
+            client.chat_completion, client.list_models = old_chat, old_models
+    asyncio.run(go())
+
+
+def test_pause_mode_blocks_when_full():
+    async def go():
+        app = SekkaApp(make_config(model="test-model", context_window=4096, context_mode="pause"))
+        async with app.run_test(size=(90, 30)) as pilot:
+            fill_chat(app)
+            await run_typing(pilot, "will this get through?")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert "Context window full" in history_text(app)
+            assert len(app.chat) == 12  # message not appended
+    asyncio.run(go())
+
+
+def test_rolling_mode_drops_oldest():
+    async def go():
+        def fake_chat(*a, **k):
+            return ChatResponse(content="ok", completion_tokens=5, elapsed=0.5)
+
+        old = client.chat_completion
+        client.chat_completion = fake_chat
+        try:
+            app = SekkaApp(make_config(model="test-model", context_window=4096, context_mode="rolling"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                fill_chat(app)
+                await run_typing(pilot, "fresh question")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "ok")
+                assert "dropped" in history_text(app)
+                assert len(app.chat) < 13  # old turns were dropped
+                # the newest exchange survived
+                assert {"role": "user", "content": "fresh question"} in app.chat
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_compact_mode_summarizes_old_messages():
+    async def go():
+        def fake_chat(endpoint, model, messages, **k):
+            if messages[0]["content"] == "You compress conversations.":
+                return ChatResponse(content="They talked about weather.", completion_tokens=8, elapsed=0.2)
+            return ChatResponse(content="post-compact reply", completion_tokens=5, elapsed=0.5)
+
+        old = client.chat_completion
+        client.chat_completion = fake_chat
+        try:
+            app = SekkaApp(make_config(model="test-model", context_window=4096, context_mode="compact"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                fill_chat(app)
+                await run_typing(pilot, "continue our chat")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "post-compact reply")
+                assert app.chat[0]["role"] == "system"
+                assert app.chat[0]["content"].startswith("[Summary of earlier conversation]")
+                assert "They talked about weather." in app.chat[0]["content"]
+                assert "compacted" in history_text(app)
+        finally:
+            client.chat_completion = old
     asyncio.run(go())

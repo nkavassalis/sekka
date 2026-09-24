@@ -14,6 +14,12 @@ class ClientError(Exception):
 
 
 @dataclass
+class ModelInfo:
+    id: str
+    max_model_len: Optional[int] = None
+
+
+@dataclass
 class ChatResponse:
     content: str
     prompt_tokens: Optional[int] = None
@@ -49,8 +55,8 @@ def _check_response(resp: requests.Response) -> Any:
         raise ClientError(f"Endpoint returned invalid JSON: {exc}") from exc
 
 
-def list_models(endpoint: str, api_key: str = "", timeout: float = 15.0) -> list[str]:
-    """GET {endpoint}/models and return the list of model ids."""
+def list_models(endpoint: str, api_key: str = "", timeout: float = 15.0) -> list[ModelInfo]:
+    """GET {endpoint}/models and return ModelInfo entries (id + context size if known)."""
     url = _base(endpoint) + "/models"
     try:
         resp = requests.get(url, headers=_headers(api_key), timeout=timeout)
@@ -58,7 +64,17 @@ def list_models(endpoint: str, api_key: str = "", timeout: float = 15.0) -> list
         raise ClientError(f"Could not reach {url}: {exc}") from exc
     data = _check_response(resp)
     models = data.get("data", []) if isinstance(data, dict) else []
-    return [m["id"] for m in models if isinstance(m, dict) and "id" in m]
+    infos: list[ModelInfo] = []
+    for m in models:
+        if isinstance(m, dict) and "id" in m:
+            size = m.get("max_model_len")
+            infos.append(
+                ModelInfo(
+                    id=m["id"],
+                    max_model_len=size if isinstance(size, int) and size > 0 else None,
+                )
+            )
+    return infos
 
 
 def chat_completion(

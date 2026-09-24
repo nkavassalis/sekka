@@ -32,6 +32,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_tokens": None,
     "request_timeout": 120,
     "history_percent": 80,
+    "context_window": None,
+    "context_mode": "pause",
     "autosave": False,
     "save_dir": ".",
     "save_format": "json",
@@ -52,6 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 VALID_SAVE_FORMATS = {"json", "markdown"}
+VALID_CONTEXT_MODES = {"pause", "rolling", "compact"}
 
 
 class ConfigError(Exception):
@@ -130,6 +133,15 @@ def validate_config(values: dict[str, Any]) -> None:
     percent = values.get("history_percent")
     if not isinstance(percent, int) or isinstance(percent, bool) or not 50 <= percent <= 95:
         raise ConfigError("Config 'history_percent' must be an integer between 50 and 95.")
+
+    window = values.get("context_window")
+    if window is not None and (not isinstance(window, int) or isinstance(window, bool) or window < 1024):
+        raise ConfigError("Config 'context_window' must be null or an integer of at least 1024.")
+
+    if values.get("context_mode") not in VALID_CONTEXT_MODES:
+        raise ConfigError(
+            f"Config 'context_mode' must be one of {sorted(VALID_CONTEXT_MODES)}."
+        )
 
     labels = values.get("labels", {})
     for name in ("user", "assistant"):

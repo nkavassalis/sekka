@@ -109,6 +109,25 @@ def test_invalid_save_format_raises():
         validate_config(bad)
 
 
+def test_context_settings_defaults_and_validation():
+    assert DEFAULT_CONFIG["context_window"] is None
+    assert DEFAULT_CONFIG["context_mode"] == "pause"
+    for bad_mode in ("shuffle", "", None, 5):
+        bad = json.loads(json.dumps(DEFAULT_CONFIG))
+        bad["context_mode"] = bad_mode
+        with pytest.raises(ConfigError, match="context_mode"):
+            validate_config(bad)
+    for bad_window in (999, "big", True):
+        bad = json.loads(json.dumps(DEFAULT_CONFIG))
+        bad["context_window"] = bad_window
+        with pytest.raises(ConfigError, match="context_window"):
+            validate_config(bad)
+    good = json.loads(json.dumps(DEFAULT_CONFIG))
+    good["context_window"] = 131072
+    good["context_mode"] = "rolling"
+    validate_config(good)
+
+
 def test_labels_defaults_and_validation():
     assert DEFAULT_CONFIG["labels"] == {"user": "You", "assistant": "Assistant"}
     for bad in ("", "   ", "x" * 31, 42, None):
