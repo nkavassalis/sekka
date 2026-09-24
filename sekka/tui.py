@@ -649,7 +649,9 @@ class SekkaApp(App):
         self.chat.append({"role": "assistant", "content": resp.content})
         self.full_chat.append({"role": "assistant", "content": resp.content})
         assistant_label = self.config["labels"]["assistant"]
-        self._append(f"{assistant_label}:\n{resp.content}", "assistant")
+        # models often pad replies with blank lines; don't render them
+        shown = resp.content.strip("\n") if resp.content.strip() else resp.content
+        self._append(f"{assistant_label}:\n{shown}", "assistant")
         self._append(format_stats(resp.elapsed, resp.completion_tokens), "stats")
         if self.config.get("autosave") and self.full_chat:
             path = self._save_history()

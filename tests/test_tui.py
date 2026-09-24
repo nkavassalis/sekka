@@ -91,6 +91,28 @@ def test_chat_roundtrip_appends_stats():
     asyncio.run(go())
 
 
+def test_padded_reply_renders_tight():
+    async def go():
+        def fake(*a, **k):
+            return ChatResponse(content="\n\nHello there.\n\n", completion_tokens=3, elapsed=0.5)
+
+        old = client.chat_completion
+        client.chat_completion = fake
+        try:
+            app = SekkaApp(make_config(model="test-model"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hi")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: len(app.chat) == 2)
+                text = history_text(app)
+                assert "Assistant:\nHello there." in text
+                assert "\n\nHello" not in text
+                assert app.chat[-1]["content"] == "\n\nHello there.\n\n"  # context keeps raw
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
 def test_error_response_rolls_back_user_turn():
     async def go():
         def boom(endpoint, model, messages, **kwargs):
