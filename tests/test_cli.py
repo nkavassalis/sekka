@@ -13,8 +13,9 @@ def captured_main(monkeypatch, argv):
         return object()
 
     class FakeApp:
-        def __init__(self, config):
+        def __init__(self, config, resume=None):
             box["config"] = config
+            box["resume"] = resume
 
         def run(self):
             box["ran"] = True
@@ -75,6 +76,13 @@ def test_no_autosave_flag_is_false_not_none(monkeypatch):
 def test_config_path_passed_through(monkeypatch):
     box = captured_main(monkeypatch, ["--config", "/x/y.json"])
     assert box["config_path"] == "/x/y.json"
+
+
+def test_resume_variations(monkeypatch):
+    assert captured_main(monkeypatch, [])["resume"] is None       # no flag
+    assert captured_main(monkeypatch, ["-r"])["resume"] == ""     # picker
+    assert captured_main(monkeypatch, ["-r", "s.json"])["resume"] == "s.json"
+    assert captured_main(monkeypatch, ["--resume", "s.json"])["resume"] == "s.json"
 
 
 @pytest.mark.parametrize("args", [

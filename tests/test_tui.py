@@ -6,7 +6,7 @@ from pathlib import Path
 from sekka import client
 from sekka.client import ChatResponse, ModelInfo
 from sekka.config import DEFAULT_CONFIG, Config
-from textual.widgets import Button, Checkbox, Input, Select
+from textual.widgets import Button, Checkbox, Input, ListItem, Select
 
 from sekka.tui import ConfigScreen, ConfirmScreen, KnowledgeScreen, SekkaApp
 
@@ -656,4 +656,99 @@ def test_config_screen_save_format_and_reasoning_applied(tmp_path):
             assert app.config["reasoning"] == "high"
             saved = json.loads(cfg_file.read_text())
             assert saved["save_format"] == "markdown" and saved["reasoning"] == "high"
+    asyncio.run(go())
+
+
+# ------------------------------------------------------------------- resume
+
+
+def test_resume_file_loads_session(tmp_path):
+    from sekka.storage import save_history
+
+    session = save_history(
+        [{"role": "user", "content": "earlier question"},
+         {"role": "assistant", "content": "earlier answer"}],
+        directory=tmp_path,
+    )
+
+    async def go():
+        app = SekkaApp(make_config(model="m"), resume=str(session))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert len(app.chat) == 2
+            assert app.chat[0]["content"] == "earlier question"
+            assert len(app.full_chat) == 2
+            text = history_text(app)
+            assert "earlier question" in text and "earlier answer" in text
+            assert "resumed 2 messages" in text
+    asyncio.run(go())
+
+
+def test_resume_invalid_file_shows_error_and_keeps_app_usable(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"messages": [{"role": "definitely-not-real", "content": "x"}]}')
+
+    async def go():
+        app = SekkaApp(make_config(model="m"), resume=str(bad))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert app.chat == []
+            assert "unsupported role" in history_text(app)
+    asyncio.run(go())
+
+
+def test_resume_picker_uses_save_dir_and_loads_choice(tmp_path):
+    from sekka.storage import save_history
+    from sekka.tui import ResumeScreen
+
+    save_history([{"role": "user", "content": "pick me"}], directory=tmp_path)
+
+    async def go():
+        app = SekkaApp(
+            make_config(model="m", save_dir=str(tmp_path)), resume=""
+        )
+        async with app.run_test(size=(90, 30)) as pilot:
+            await wait_for(pilot, lambda: isinstance(app.screen, ResumeScreen))
+            assert app.screen.paths and app.screen.paths[0].parent == tmp_path
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: not isinstance(app.screen, ResumeScreen))
+            assert app.chat == [{"role": "user", "content": "pick me"}]
+    asyncio.run(go())
+
+
+def test_resume_picker_empty_dir_reports_and_continues(tmp_path):
+    async def go():
+        app = SekkaApp(
+            make_config(model="m", save_dir=str(tmp_path / "nothing_here")), resume=""
+        )
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert "No saved sessions" in history_text(app)
+            assert app.chat == []
+    asyncio.run(go())
+
+
+def test_model_screen_handles_weird_model_ids():
+    from sekka.client import ModelInfo
+    from sekka.tui import ModelScreen
+
+    async def go():
+        def fake_models(endpoint, api_key=""):
+            return [
+                ModelInfo("org/model:v1", 8192),
+                ModelInfo("other", None),
+            ]
+
+        old = client.list_models
+        client.list_models = fake_models
+        try:
+            app = SekkaApp(make_config(model=""))  # no model -> picker at boot
+            async with app.run_test(size=(90, 30)) as pilot:
+                await wait_for(pilot, lambda: isinstance(app.screen, ModelScreen))
+                assert len(list(app.screen.query(ListItem))) == 2
+                await pilot.press("enter")  # pick the id with ':' and '/' in it
+                await wait_for(pilot, lambda: app.config["model"] == "org/model:v1")
+                assert app.context_total == 8192
+        finally:
+            client.list_models = old
     asyncio.run(go())

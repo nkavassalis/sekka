@@ -48,7 +48,12 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
     yield widget` compose idiom does NOTHING in a normal method like
     `_refresh_list()`; build widgets and `mount()` them explicitly.
   - Widget IDs must be unique per screen — two `Horizontal(id="k_form_row")`
-    raise MountError.
+    raise MountError. And IDs must match `[A-Za-z0-9_-]+`: `id=f"model:{name}"`
+    crashed the DOM for models named like `org/model:v1` (latent bug, fixed
+    with index-based ids `model-item-{i}`). Never build widget ids from
+    externally-controlled strings.
+  - In tests, drive ListView picks with `pilot.press("enter")` (modal
+    auto-focuses the list); ListItem has no `action_select`.
   - `DirectoryTree` + `on_directory_tree_file_selected` makes a fine minimal
     file browser (FileBrowseScreen starts in `.sekka` when it exists).
   - `Screen` objects have **no** `push_screen` in Textual 8 — push from a
@@ -111,6 +116,10 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
 - **reasoning_effort**: config `reasoning` (default `medium`), omitted from
   the payload when `none` so non-reasoning endpoints never see it. The
   /compact summary call always uses `reasoning_effort="none"`.
+- **Resume/session files are untrusted**: `storage.load_history` size-caps,
+  strictly validates shape/roles/content types+limits, and copies only
+  role/content — never render or store whatever a JSON file contains.
+  `-r` with no value = picker listing `save_dir` JSON newest-first.
 - Saves: timestamped files, confirm-before-write, no autosave by default.
 
 ## Deployment (sekka.org)

@@ -59,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="auto-save history after every reply (--autosave / --no-autosave)",
     )
     parser.add_argument(
+        "-r",
+        "--resume",
+        nargs="?",
+        const="",
+        metavar="FILE",
+        help="resume a saved session; without FILE, pick one from the save directory",
+    )
+    parser.add_argument(
         "--config",
         help="path to a config file (default: ./.sekka/config.json then ~/.sekka/config.json)",
     )
@@ -91,7 +99,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     from .tui import SekkaApp
 
-    app = SekkaApp(config)
+    app = SekkaApp(config, resume=args.resume)
     app.run()
     return 0
 

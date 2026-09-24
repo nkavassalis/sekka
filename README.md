@@ -30,6 +30,8 @@ bots, and role playing games.
 - Optional autosave after every reply (off by default)
 - Configurable message colors and key bindings
 - Dark bracketed timing line after each reply: `[1.4s, 38.2 tok/s]`
+- Sessions: `/save` writes a resumable JSON file, and `sekka -r session.json`
+  (or bare `sekka -r` for a picker) continues where you left off
 - Knowledge files as tools: `/knowledge` turns process docs, character cards,
   or lore into read-only tools the model can consult (tool-calling models
   only; the model can never read files you didn't list)
@@ -80,6 +82,7 @@ sekka [options]
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
+-r, --resume [FILE]    resume a saved session; no FILE = pick from save dir
 --config PATH          use a specific config file
 --version              show version
 ```
@@ -146,6 +149,6 @@ Layout: `sekka/config.py` (layered config), `sekka/client.py` (HTTP),
 
 ## Credits
 
-*sekka* (雪華) — “snowflake”: each chat crystallises one exchange at a time.
+*sekka* 雪華: each chat crystallises one exchange at a time.
 
 Built by [Qwen 3.8 Flash Next](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4). ⚡🇨🇦

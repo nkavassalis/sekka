@@ -9,6 +9,7 @@ configurable).
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import re
 import time
@@ -98,14 +99,14 @@ class ModelScreen(ModalScreen[Optional[str]]):
         with Vertical():
             yield Static("Select a model (enter to choose, esc to cancel):", classes="msg-system")
             yield ListView(
-                *[ListItem(Label(name, id=f"model:{name}")) for name in self.models],
+                *[ListItem(Label(name, id=f"model-item-{i}")) for i, name in enumerate(self.models)],
                 id="model_list",
             )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         label = event.item.children[0] if event.item.children else None
-        if label is not None and label.id and label.id.startswith("model:"):
-            self.dismiss(label.id[len("model:"):])
+        if label is not None and label.id and label.id.startswith("model-item-"):
+            self.dismiss(self.models[int(label.id[len("model-item-"):])])
         else:
             self.dismiss(None)
 
@@ -318,6 +319,50 @@ class _ConfigInputError(Exception):
     pass
 
 
+class ResumeScreen(ModalScreen[Optional[str]]):
+    """Pick a saved session file (from the configured save directory)."""
+
+    DEFAULT_CSS = """
+    ResumeScreen { align: center middle; }
+    ResumeScreen > Vertical {
+        width: 70%; max-width: 100; min-height: 6; max-height: 80%;
+        padding: 1 2; background: $surface; border: thick $primary;
+    }
+    ListView { height: auto; max-height: 100%; }
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+
+    def __init__(self, paths: list[Path], directory: Path) -> None:
+        super().__init__()
+        self.paths = paths
+        self.directory = directory
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(
+                f"Resume a session from {self.directory} (enter to choose, esc to cancel):",
+                classes="msg-system",
+            )
+            yield ListView(
+                *[
+                    ListItem(Label(f"{p.name}  ({p.stat().st_size // 1024} KB)", id=f"session-item-{i}"))
+                    for i, p in enumerate(self.paths)
+                ],
+                id="session_list",
+            )
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        label = event.item.children[0] if event.item.children else None
+        if label is not None and label.id and label.id.startswith("session-item-"):
+            self.dismiss(str(self.paths[int(label.id[len("session-item-"):])]))
+        else:
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class FileBrowseScreen(ModalScreen[Optional[str]]):
     """Minimal file browser; starts in the project's .sekka dir when present."""
 
@@ -513,8 +558,10 @@ class SekkaApp(App):
         Binding("escape", "clear_input", "Clear input"),
     ]
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, resume: Optional[str] = None) -> None:
         self.config = config
+        # None = no resume, "" = show the session picker, otherwise a file path
+        self.resume = resume
         super().__init__()
         self.chat: list[dict[str, str]] = []  # context sent to the model (no system)
         self.full_chat: list[dict[str, str]] = []  # everything said, for /save
@@ -586,6 +633,10 @@ class SekkaApp(App):
             self._fetch_context_size(model)
         self._apply_context_total()
         self._update_ctx_label()
+        if self.resume == "":
+            self._open_resume_picker()
+        elif self.resume:
+            self._load_session(self.resume)
 
     @work(exclusive=True, group="models")
     async def _fetch_context_size(self, model: str) -> None:
@@ -1077,6 +1128,41 @@ class SekkaApp(App):
             self._fetch_context_size(self.config["model"])
         self.query_one("#input", ChatInput).set_keymap(self.config.keys)
         self.refresh_css()
+
+    # ------------------------------------------------------------- sessions
+
+    def _load_session(self, path: str) -> None:
+        try:
+            messages = storage.load_history(path)
+        except storage.StorageError as exc:
+            self._sys(f"Could not resume {path}: {exc}", error=True)
+            return
+        self.chat = copy.deepcopy(messages)
+        self.full_chat = copy.deepcopy(messages)
+        labels = self.config["labels"]
+        for msg in messages:
+            role, content = msg["role"], msg["content"]
+            if role == "user":
+                self._append(f"{labels['user']}:\n{content}", "user")
+            elif role == "assistant":
+                self._append(f"{labels['assistant']}:\n{content}", "assistant")
+            else:
+                self._append(f"(restored context note)\n{content}", "system")
+        self._sys(f"(resumed {len(messages)} messages from {path})")
+        self._update_ctx_label()
+
+    def _open_resume_picker(self) -> None:
+        directory = Path(self.config.get("save_dir", ".")).expanduser()
+        sessions = storage.list_sessions(directory)
+        if not sessions:
+            self._sys(f"No saved sessions found in {directory}.", error=True)
+            return
+
+        def chosen(path: Optional[str]) -> None:
+            if path:
+                self._load_session(path)
+
+        self.push_screen(ResumeScreen(sessions, directory), chosen)
 
     # ------------------------------------------------------------ model pick
 

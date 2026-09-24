@@ -170,6 +170,15 @@ older terminals it may arrive as a plain enter.
 
 ## Saved files
 
+`/save` (and autosave) write timestamped files; JSON saves are also sessions:
+`sekka -r FILE` resumes one, and bare `sekka -r` lists the JSON files in the
+current `save_dir` newest-first. Resume files are treated as **untrusted
+input**: size-capped read, strict JSON, message/role/content type and size
+limits, and only `role`/`content` of `user`/`assistant`/`system` messages are
+loaded - anything else raises a readable error and the app continues fresh.
+A colon (or any non `[\w-]` char) in a saved-JSON position can't hurt the
+app because unknown keys are dropped rather than rendered.
+
 `/save` confirms first, then writes `sekka_YYYYMMDD_HHMMSS.json` (collision
 safe: `..._1.json`, ...) into `save_dir`:
 
