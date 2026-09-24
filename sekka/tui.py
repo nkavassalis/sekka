@@ -141,20 +141,25 @@ class ConfirmScreen(ModalScreen[bool]):
 class ConfigScreen(ModalScreen[Optional[dict]]):
     """The /config screen: edit endpoint, model, system prompt, etc."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("pageup", "form_up", "Scroll form up", priority=True),
+        Binding("pagedown", "form_down", "Scroll form down", priority=True),
+    ]
 
     DEFAULT_CSS = """
     ConfigScreen { align: center middle; }
     ConfigScreen > Vertical {
-        width: 80%; max-width: 100; height: auto; max-height: 95%;
-        padding: 1 2; background: $surface; border: thick $primary;
+        width: 80%; max-width: 100; height: 92%;
+        padding: 0 0 1 2; background: $surface; border: thick $primary;
     }
+    #cfg_scroll { width: 1fr; height: 1fr; }
     ConfigScreen Label { padding-top: 1; color: $primary; }
     #config_labels Input { width: 1fr; }
     #config_labels { height: auto; }
     ConfigScreen TextArea { height: 6; border: round $primary 40%; }
     ConfigScreen Input { border: round $primary 40%; }
-    #config_buttons { align-horizontal: right; }
+    #config_buttons { align-horizontal: right; height: auto; }
     #config_buttons Button { margin-left: 1; }
     """
 
@@ -168,29 +173,46 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
     def compose(self) -> ComposeResult:
         values = self.config.values
         with Vertical():
-            yield Static("Sekka configuration (esc cancels)", classes="msg-system")
-            yield Label("Endpoint")
-            yield Input(value=str(values.get("endpoint", "")), id="cfg_endpoint")
-            yield Label("Model (leave empty to pick from endpoint)")
-            yield Input(value=str(values.get("model", "")), id="cfg_model")
-            yield Label("Your name label / Assistant name label")
-            with Vertical(id="config_labels"):
-                yield Input(value=str(values.get("labels", {}).get("user", "You")), id="cfg_label_user", placeholder="You")
-                yield Input(value=str(values.get("labels", {}).get("assistant", "Assistant")), id="cfg_label_assistant", placeholder="Assistant")
-            yield Label("API key (optional)")
-            yield Input(value=str(values.get("api_key", "")), password=True, id="cfg_api_key")
-            yield Label("System prompt")
-            yield TextArea(str(values.get("system_prompt", "")), id="cfg_system")
-            yield Label("Temperature (blank = endpoint default)")
-            yield Input(value=_blank_if_none(values.get("temperature")), id="cfg_temperature")
-            yield Label("Max tokens (blank = endpoint default)")
-            yield Input(value=_blank_if_none(values.get("max_tokens")), id="cfg_max_tokens")
-            yield Label("Save directory")
-            yield Input(value=str(values.get("save_dir", ".")), id="cfg_save_dir")
-            yield Checkbox("Autosave history after every reply", value=bool(values.get("autosave")), id="cfg_autosave")
+            with VerticalScroll(id="cfg_scroll"):
+                yield Static("Sekka configuration (PageUp/PageDown to scroll, esc cancels)", classes="msg-system")
+                yield Label("Endpoint")
+                yield Input(value=str(values.get("endpoint", "")), id="cfg_endpoint")
+                yield Label("Model (leave empty to pick from endpoint)")
+                yield Input(value=str(values.get("model", "")), id="cfg_model")
+                yield Label("Your name label / Assistant name label")
+                with Vertical(id="config_labels"):
+                    yield Input(value=str(values.get("labels", {}).get("user", "You")), id="cfg_label_user", placeholder="You")
+                    yield Input(value=str(values.get("labels", {}).get("assistant", "Assistant")), id="cfg_label_assistant", placeholder="Assistant")
+                yield Label("API key (optional)")
+                yield Input(value=str(values.get("api_key", "")), password=True, id="cfg_api_key")
+                yield Label("System prompt")
+                yield TextArea(str(values.get("system_prompt", "")), id="cfg_system")
+                yield Label("Temperature (blank = endpoint default)")
+                yield Input(value=_blank_if_none(values.get("temperature")), id="cfg_temperature")
+                yield Label("Max tokens (blank = endpoint default)")
+                yield Input(value=_blank_if_none(values.get("max_tokens")), id="cfg_max_tokens")
+                yield Label("History height % (50-95)")
+                yield Input(value=_blank_if_none(values.get("history_percent")), id="cfg_history_percent")
+                yield Label("Save directory")
+                yield Input(value=str(values.get("save_dir", ".")), id="cfg_save_dir")
+                yield Checkbox("Autosave history after every reply", value=bool(values.get("autosave")), id="cfg_autosave")
             with Vertical(id="config_buttons"):
                 yield Button("Save", id="config_save", variant="primary")
                 yield Button("Cancel", id="config_cancel", variant="default")
+
+    def action_form_up(self) -> None:
+        self.query_one("#cfg_scroll", VerticalScroll).scroll_page_up(animate=False)
+
+    def action_form_down(self) -> None:
+        self.query_one("#cfg_scroll", VerticalScroll).scroll_page_down(animate=False)
+
+    def on_descendant_focus(self, event) -> None:
+        """Keep the focused field visible when tabbing through a short screen."""
+        widget = self.app.focused
+        if widget is not None:
+            self.query_one("#cfg_scroll", VerticalScroll).scroll_to_widget(
+                widget, top=True, immediate=True
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "config_cancel":
@@ -215,6 +237,10 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
         try:
             temperature = _num("cfg_temperature", float)
             max_tokens = _num("cfg_max_tokens", int)
+            history_percent = _num("cfg_history_percent", int)
+            if history_percent is not None and not 50 <= history_percent <= 95:
+                self.notify("History height % must be between 50 and 95.", severity="error")
+                return
         except _ConfigInputError:
             return
 
@@ -230,6 +256,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "system_prompt": self.query_one("#cfg_system", TextArea).text,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "history_percent": history_percent if history_percent is not None else self.config.get("history_percent", 80),
                 "save_dir": self.query_one("#cfg_save_dir", Input).value.strip() or ".",
                 "autosave": bool(self.query_one("#cfg_autosave", Checkbox).value),
             }

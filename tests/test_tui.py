@@ -233,6 +233,23 @@ def test_thinking_spinner_shown_then_removed():
     asyncio.run(go())
 
 
+def test_config_screen_scrollable_on_small_terminal():
+    async def go():
+        app = SekkaApp(make_config(model="test-model"))
+        async with app.run_test(size=(70, 16)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfigScreen))
+            screen = app.screen
+            save = screen.query_one("#config_save")
+            assert 0 <= save.region.y < 16  # buttons always visible
+            scroller = screen.query_one("#cfg_scroll")
+            await pilot.press("pagedown")
+            await pilot.pause()
+            assert scroller.scroll_y > 0  # keyboard scrolling works
+    asyncio.run(go())
+
+
 def test_clear_command_resets_history():
     async def go():
         app = SekkaApp(make_config(model="test-model"))

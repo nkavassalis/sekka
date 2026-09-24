@@ -117,5 +117,4 @@ Layout: `sekka/config.py` (layered config), `sekka/client.py` (HTTP),
 
 *sekka* (雪華) — “snowflake”: each chat crystallises one exchange at a time.
 
-Built by [Qwen 3.8 Flash Next](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4)
-using 0.04 kWh of Canadian electricity. ⚡🇨🇦
+Built by [Qwen 3.8 Flash Next](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4). ⚡🇨🇦
