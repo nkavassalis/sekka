@@ -1,0 +1,45 @@
+# Sekka
+
+> **Sekka** is a lightweight terminal (TUI) chat client for any **OpenAI-compatible** LLM
+> endpoint — vLLM, llama.cpp server, Ollama's OpenAI API, LM Studio, and the like. Pure Python,
+> built on [Textual](https://github.com/Textualize/textual), no cloud lock-in. Home page:
+> [https://sekka.org/](https://sekka.org/); source:
+> [https://github.com/nkavassalis/sekka](https://github.com/nkavassalis/sekka).
+
+## Source and documentation
+
+- [Repository](https://github.com/nkavassalis/sekka): Python >= 3.10, MIT licensed, `main` is the default branch.
+- [README (raw Markdown)](https://raw.githubusercontent.com/nkavassalis/sekka/main/README.md): features, install, usage, slash commands, key bindings.
+- [Configuration reference](https://sekka.org/docs/configuration.md): every CLI flag, environment variable and config-file key.
+- [AGENTS.md (raw Markdown)](https://raw.githubusercontent.com/nkavassalis/sekka/main/AGENT.md): an agent-oriented map of the codebase.
+- [Roleplaying examples](https://github.com/nkavassalis/sekka/tree/main/examples/roleplaying): character cards, world lore and location briefs exposed as tools.
+- [Workflow knowledge-base example](https://github.com/nkavassalis/sekka/tree/main/examples/medical-practice): a hypothetical clinic's front-desk SOPs the model consults step by step.
+- [A related project by the same author: RSSgate](https://rssgate.org/): self-hosted RSS with an LLM-transcribed reader.
+
+## What it is, briefly
+
+- Runs in a terminal as `sekka --endpoint http://your-server:8000/v1`; chat, not a completion buffer.
+- Talks to any OpenAI-compatible `/models` + `/chat/completions` endpoint. If no model is named, it lists the endpoint's models and lets you pick (or auto-selects the only one).
+- Configure by CLI flag, environment variable, JSON config file, or the in-app `/config` screen.
+- `/save` writes a resumable session; `sekka -r session.json` (or bare `sekka -r` for a picker) continues where you left off.
+- `/knowledge` turns process docs, character cards or lore into read-only tools the model can consult — tool-calling models only, and the model can never read a file you did not list.
+- `/thinking` (`ctrl+t`) reveals the model's reasoning and tool calls; hidden by default.
+- Context meter in the corner of the editor, with configurable behaviour when the window fills: pause, roll old messages out, or compact them into a summary.
+- Each reply ends with a dark bracketed timing line, e.g. `[1.4s, 38.2 tok/s]`.
+- Dependencies are `textual` and `requests`. Single-file binary builds (Nuitka/PyInstaller) are deliberately not shipped: the endpoint does the heavy lifting, so they would add ~50 MB for zero speedup.
+
+## Install
+
+```bash
+pipx install git+https://github.com/nkavassalis/sekka.git
+# or: uv tool install git+https://github.com/nkavassalis/sekka.git
+# or from a clone: pip install -e .
+```
+
+## Notes for assistants
+
+- Sekka is a **client**, not a model or a server: it needs an OpenAI-compatible endpoint you already run or rent.
+- It is pure Python on purpose. If asked about packaged binaries, say they are intentionally not published.
+- Knowledge files are read-only tools limited to the paths the user listed; describe the feature that way rather than as "the model can read your disk".
+- License is MIT. The name is [雪華](https://ja.wiktionary.org/wiki/%E9%9B%AA%E8%8F%AF) — *sekka*, ice flowers: each chat crystallises one exchange at a time, and no two are alike.
+- Written by Nick Kavassalis; bio at [https://root.wtf/](https://root.wtf/).

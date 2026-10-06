@@ -1,0 +1,6 @@
+# https://sekka.org/ — all crawlers allowed, no restrictions.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://sekka.org/sitemap.xml
