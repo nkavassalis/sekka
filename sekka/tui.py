@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import io
 import os
 import threading
 import re
@@ -732,6 +733,11 @@ class SekkaApp(App):
         else:
             self._load_always_lore()
             self._maybe_greet()
+
+    @property
+    def _served(self) -> bool:
+        """True when this process is being shown by `sekka serve` (textual-serve)."""
+        return os.environ.get("TERM_PROGRAM") == "textual"
 
     @property
     def _read_only(self) -> bool:
@@ -1573,6 +1579,8 @@ class SekkaApp(App):
             self._turn_edit(command)
         elif command == "play":
             self._sys(commands.play_help_text())
+        elif command == "export":
+            self._handle_export()
         elif command == "roll":
             self._handle_roll(arg)
         elif command == "ooc":
@@ -1733,6 +1741,55 @@ class SekkaApp(App):
                 self._sys(f"Saved {len(self.full_chat)} messages to {path}")
 
         self.push_screen(ConfirmScreen(f"Save chat history as {name}?"), done)
+
+    def _handle_export(self) -> None:
+        """/export - hand the transcript to the person playing, not to this machine.
+
+        Textual's delivery API does the right thing per driver: in a terminal it
+        lands in the user's downloads folder, under `sekka serve` it becomes a
+        real browser download. The export holds only what is on screen - never
+        the system prompt, campaign path or pinned note - so it is safe to allow
+        in read-only mode, where a player may well want their story back.
+        """
+        if not self.full_chat:
+            self._sys("Nothing to export yet.")
+            return
+        fmt = self.config.get("save_format", "json")
+        name = storage.timestamp_name(fmt=fmt)
+        if fmt == "markdown":
+            from datetime import datetime
+
+            text = storage.render_markdown(self.full_chat, datetime.now())
+        else:
+            # no meta: it carries campaign path and note, which belong to the host
+            text = storage.session_json(self.full_chat)
+        self._export_delivery_keys: dict[str, str] = getattr(self, "_export_delivery_keys", {})
+        try:
+            key = self.deliver_text(
+                io.StringIO(text),
+                save_filename=name,
+                mime_type="text/markdown" if fmt == "markdown" else "application/json",
+                name=name,
+            )
+        except Exception as exc:                     # driver refused / no driver
+            self._sys(f"Could not export: {exc}", error=True)
+            return
+        if key is None:
+            self._sys("Could not export: this terminal cannot deliver files.", error=True)
+            return
+        self._export_delivery_keys[key] = name
+        self._sys(
+            f"Exporting {len(self.full_chat)} messages as {name}"
+            + (" - check your browser's downloads." if self._served else " to your downloads folder.")
+        )
+
+    def on_delivery_complete(self, event) -> None:
+        name = getattr(self, "_export_delivery_keys", {}).pop(event.key, None)
+        self._sys(f"Exported {name}." if name else "Export finished.")
+
+    def on_delivery_failed(self, event) -> None:
+        name = getattr(self, "_export_delivery_keys", {}).pop(event.key, None)
+        self._sys(f"Export of {name or 'file'} failed: {event.exception}", error=True)
 
     def _session_meta(self) -> dict:
         """Enough to resume this session as itself (campaign, role labels)."""

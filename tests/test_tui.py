@@ -2014,3 +2014,165 @@ def test_serve_readonly_flag_reaches_every_tab():
     assert args.serve_readonly is True
     served = serve_command(extra + ["--readonly"])
     assert "--readonly" in served.split()
+
+
+# ------------------------------------------------------------------- /export
+
+
+
+def _stub_chat(monkeypatch):
+    """Non-streaming stub: export tests play a real turn but make no real request."""
+    monkeypatch.setattr(
+        client, "chat_completion",
+        lambda *a, **k: ChatResponse(content="a reply", completion_tokens=8, elapsed=0.4),
+    )
+
+
+def _capture_delivery(app, save_directory=None):
+    """Replace deliver_text, returning the list of (text, filename, mime) tuples."""
+    delivered = []
+
+    def fake_deliver_text(path_or_file, **kwargs):
+        text = path_or_file.read()
+        delivered.append((text, kwargs.get("save_filename"), kwargs.get("mime_type")))
+        return "key-1"
+
+    app.deliver_text = fake_deliver_text
+    return delivered
+
+
+def test_export_delivers_the_visible_transcript_and_no_host_secrets(monkeypatch):
+    _stub_chat(monkeypatch)
+    async def go():
+        app = SekkaApp(make_config(
+            model="m",
+            system_prompt="SECRET SYSTEM PROMPT should never be exported",
+            note="pinned secret note",
+        ))
+        delivered = _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "what did I say?")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat and app.chat[-1]["role"] == "assistant")
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: delivered)
+        text, name, mime = delivered[0]
+        payload = json.loads(text)
+        assert payload["messages"] == app.full_chat
+        assert "meta" not in payload                      # campaign path / note stay home
+        assert "SECRET SYSTEM PROMPT" not in text
+        assert "pinned secret note" not in text
+        assert name.endswith(".json") and mime == "application/json"
+        assert payload["sekka_session"] == 2
+        assert "Exporting 2 messages" in history_text(app)
+    asyncio.run(go())
+
+
+def test_exported_file_is_resumable(tmp_path, monkeypatch):
+    _stub_chat(monkeypatch)
+    """An export is a normal session file: -r on it must work."""
+    from sekka import storage
+
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        delivered = _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "remember me")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat[-1]["role"] == "assistant")
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: delivered)
+        path = tmp_path / "exported.json"
+        path.write_text(delivered[0][0])
+        messages, meta = storage.load_session(path)
+        assert [m["role"] for m in messages] == ["user", "assistant"]
+        assert meta == {}
+    asyncio.run(go())
+
+
+def test_export_follows_the_markdown_format_setting(monkeypatch):
+    _stub_chat(monkeypatch)
+    async def go():
+        app = SekkaApp(make_config(model="m", save_format="markdown"))
+        delivered = _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "hi")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat[-1]["role"] == "assistant")
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: delivered)
+        text, name, mime = delivered[0]
+        assert text.startswith("# Sekka chat (saved ")
+        assert name.endswith(".md") and mime == "text/markdown"
+    asyncio.run(go())
+
+
+def test_read_only_players_can_export_their_own_story(monkeypatch):
+    _stub_chat(monkeypatch)
+    async def go():
+        app = SekkaApp(make_config(model="m", readonly=True))
+        delivered = _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "hello")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat[-1]["role"] == "assistant")
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: delivered)
+            assert "Read-only mode: /export" not in history_text(app)
+    asyncio.run(go())
+
+
+def test_export_with_nothing_to_send_says_so():
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "Nothing to export" in history_text(app))
+    asyncio.run(go())
+
+
+def test_failed_delivery_is_reported(monkeypatch):
+    _stub_chat(monkeypatch)
+    from textual.events import DeliveryFailed
+
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "hi")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat[-1]["role"] == "assistant")
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "Exporting" in history_text(app))
+            app.post_message(DeliveryFailed(key="key-1", exception=OSError("disk gone")))
+            await wait_for(pilot, lambda: "failed" in history_text(app).lower())
+            assert "disk gone" in history_text(app)
+    asyncio.run(go())
+
+
+def test_export_wording_differs_when_served(monkeypatch):
+    monkeypatch.setenv("TERM_PROGRAM", "textual")        # what textual-serve sets
+    _stub_chat(monkeypatch)
+
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        delivered = _capture_delivery(app)
+        async with app.run_test(size=(90, 30)) as pilot:
+            assert app._served is True
+            await run_typing(pilot, "hi")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat[-1]["role"] == "assistant")
+            await run_typing(pilot, "/export")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: delivered)
+            text = history_text(app)
+            assert "check your browser's downloads" in text
+            assert "downloads folder" not in text
+    asyncio.run(go())

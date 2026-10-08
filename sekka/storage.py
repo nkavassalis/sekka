@@ -74,21 +74,36 @@ def save_history(
     saved_at = now or datetime.now()
     path = Path(overwrite) if overwrite else _unique_path(directory, timestamp_name(saved_at, fmt=fmt))
 
-    if fmt == "markdown":
-        path.write_text(render_markdown(messages, saved_at))
-    else:
-        payload = {
-            "sekka_session": SESSION_VERSION,
-            "saved_at": saved_at.isoformat(timespec="seconds"),
-            "messages": [
-                {"role": m.get("role"), "content": m.get("content")}
-                for m in messages
-            ],
-        }
-        if meta:
-            payload["meta"] = dict(meta)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    text = (
+        render_markdown(messages, saved_at)
+        if fmt == "markdown"
+        else session_json(messages, meta=meta, saved_at=saved_at)
+    )
+    path.write_text(text)
     return path
+
+
+def session_json(
+    messages: Sequence[dict],
+    meta: Optional[dict] = None,
+    saved_at: Optional[datetime] = None,
+) -> str:
+    """The JSON text a session file would contain, without writing it.
+
+    Used by /export, which hands the same resumable document to the caller's
+    downloads folder (or browser) instead of the save directory.
+    """
+    saved_at = saved_at or datetime.now()
+    payload: dict[str, Any] = {
+        "sekka_session": SESSION_VERSION,
+        "saved_at": saved_at.isoformat(timespec="seconds"),
+        "messages": [
+            {"role": m.get("role"), "content": m.get("content")} for m in messages
+        ],
+    }
+    if meta:
+        payload["meta"] = dict(meta)
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
 def _clean_meta(raw: Any) -> dict:
