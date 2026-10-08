@@ -31,6 +31,7 @@ from .config import (
     DEFAULT_CONFIG,
     Config,
     deep_merge,
+    save_campaign_values,
     save_config,
     validate_config,
     ConfigError,
@@ -199,6 +200,8 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 yield Input(value=str(values.get("api_key", "")), password=True, id="cfg_api_key")
                 yield Label("System prompt")
                 yield TextArea(str(values.get("system_prompt", "")), id="cfg_system")
+                yield Label("Pinned note / running state (sent with every request; /note edits it too)")
+                yield TextArea(str(values.get("note", "")), id="cfg_note")
                 yield Label("Temperature (blank = endpoint default)")
                 yield Input(value=_blank_if_none(values.get("temperature")), id="cfg_temperature")
                 yield Label("Max tokens (blank = endpoint default)")
@@ -310,6 +313,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "labels": {"user": user_label, "assistant": assistant_label},
                 "api_key": self.query_one("#cfg_api_key", Input).value,
                 "system_prompt": self.query_one("#cfg_system", TextArea).text,
+                "note": self.query_one("#cfg_note", TextArea).text,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "history_percent": history_percent if history_percent is not None else self.config.get("history_percent", 80),
@@ -750,6 +754,10 @@ class SekkaApp(App):
                 f"--- {Path(p).name} ---\n{text}" for p, text in self.lore.items()
             ]
             parts.append("[Reference material already loaded]\n" + "\n\n".join(blocks))
+        note = (self.config.get("note") or "").strip()
+        if note:
+            # last, because author's notes and running state want the model's attention
+            parts.append("[Author's note - keep this current and honoured]\n" + note)
         return "\n\n".join(p for p in parts if p)
 
     def _used_estimate(self) -> int:
@@ -1453,6 +1461,8 @@ class SekkaApp(App):
             self.action_stop_generation()
         elif command in ("undo", "edit", "regen", "swipe"):
             self._turn_edit(command)
+        elif command == "note":
+            self._handle_note(arg)
         elif command == "campaign":
             self._handle_campaign(arg)
         elif command == "exit":
@@ -1526,6 +1536,46 @@ class SekkaApp(App):
             self._rebuild_history()
             self._set_notice(f"reply {self.alt_index + 1} of {len(self.turn_alts)}")
 
+    def _handle_note(self, arg: str) -> None:
+        """/note - the pinned block that survives compaction and long scenes.
+
+        Inventory, injuries, promises, "the door is still barred": anything the
+        model must keep straight that summarising would otherwise eat.
+        """
+        if not arg:
+            note = (self.config.get("note") or "").strip()
+            self._sys(f"Pinned note:\n{note}" if note else "No pinned note set. Use: /note <text>")
+            return
+        if arg == "clear":
+            text = ""
+        elif arg.startswith("+"):
+            existing = (self.config.get("note") or "").strip()
+            addition = arg[1:].strip()
+            if not addition:
+                self._sys("Nothing to append. Use: /note +<text>", error=True)
+                return
+            text = f"{existing}\n{addition}" if existing else addition
+        else:
+            text = arg
+        if len(text) > 20_000:
+            self._sys("That note is too long (20,000 character limit).", error=True)
+            return
+        self.config["note"] = text
+        written = None
+        try:
+            if text and self.config.campaign_path is not None:
+                written = save_campaign_values(self.config, {"note": text})
+            if written is None:
+                save_config(self.config)
+        except (OSError, ConfigError) as exc:
+            self._sys(f"Note set for this session, but could not save it: {exc}", error=True)
+            return
+        self._update_ctx_label()
+        if not text:
+            self._sys("(pinned note cleared)")
+        else:
+            self._sys(f"Pinned note {'saved to ' + str(written) if written else 'saved'}:\n{text}")
+
     def _confirm_save(self) -> None:
         if not self.full_chat:
             self._sys("Nothing to save.")
@@ -1545,6 +1595,9 @@ class SekkaApp(App):
     def _session_meta(self) -> dict:
         """Enough to resume this session as itself (campaign, role labels)."""
         meta: dict = {"labels": dict(self.config["labels"])}
+        note = (self.config.get("note") or "").strip()
+        if note and len(note) <= storage.MAX_META_NOTE:
+            meta["note"] = note
         if self.config.campaign_path is not None:
             meta["campaign"] = str(self.config.campaign_path)
         return meta
@@ -1579,10 +1632,27 @@ class SekkaApp(App):
         except ConfigError as exc:
             self._sys(f"Invalid configuration: {exc}", error=True)
             return
+        campaign_edits: dict[str, Any] = {}
         for key, new in values.items():
-            if self.config.values.get(key) != new:
-                self.config.release_override(key)  # user changed it: persist it
+            if self.config.values.get(key) == new:
+                continue
+            owned = self.config.campaign_path is not None and (
+                key in self.config.campaign_keys or key == "note"
+            )
+            # check ownership first: release_override() forgets the campaign key
+            if owned:
+                campaign_edits[key] = new
+            self.config.release_override(key)  # user changed it: persist it
         self.config.values.update(values)
+        if campaign_edits:
+            # campaign-owned values belong in the campaign, not config.json
+            try:
+                save_campaign_values(self.config, campaign_edits)
+            except ConfigError as exc:
+                self._sys(
+                    f"Applied for this session, but the campaign file was not updated: {exc}",
+                    error=True,
+                )
         try:
             written = save_config(self.config)
         except OSError as exc:
@@ -1628,6 +1698,9 @@ class SekkaApp(App):
                 self._apply_campaign(candidate, persist=False)
             else:
                 self._sys(f"Session referenced campaign {campaign}, which is gone.", error=True)
+        note = meta.get("note")
+        if note:
+            self.config["note"] = note  # the state as it was when saved wins
         labels = meta.get("labels")
         if labels and self.config.campaign_path is None:
             merged = {**self.config["labels"], **labels}

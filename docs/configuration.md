@@ -157,6 +157,31 @@ that already arrived, marked `[stopped]`; it also frees the editor immediately
 when the endpoint has gone quiet, though an abandoned request may still be
 finishing server-side. Streaming is skipped for the `/compact` summary call.
 
+### The pinned note (`note`, `/note`)
+
+`note` is a short block of text appended **last** in the system prompt, so the
+model weighs it most: inventory, injuries, promises made, "the door is still
+barred from the scene three ago". It is the one thing that survives `compact`
+summarising your history away.
+
+```json
+{ "note": "PC: Vesna. Carrying: brass key, 12 shillings. Owes Pock a favour." }
+```
+
+Edit it three ways, all of which persist it:
+
+- `/note` shows it, `/note <text>` replaces it, `/note +<text>` appends a line
+  (useful as the scene moves), `/note clear` empties it.
+- `/config` has the same field.
+- With a campaign loaded it is written into the **campaign file**, not
+  `config.json` - the campaign layer overrides the config file, so writing there
+  would be ignored next start. Any campaign-owned value you change in `/config`
+  (system prompt, labels, temperature, ...) is written back to the campaign the
+  same way, preserving other keys in that file.
+- `/save` records the note as it was at that moment, and `sekka -r` restores
+  *that* version, so a saved game picks up with the state it had when you saved -
+  even if the campaign file has since been edited.
+
 ### Lore that arrives on its own (`keywords`, `always`)
 
 A knowledge entry can carry two optional fields:
@@ -225,6 +250,7 @@ according to `context_mode`:
 | `campaign`        | string          | `""`                          | Campaign file to load (relative to this config file) |
 | `greeting`        | string          | `""`                          | Opening scene (usually from a campaign); shown + in context |
 | `player`          | string          | `""`                          | Your character, appended to the system prompt |
+| `note`            | string          | `""`                          | Pinned running state, sent last; `/note` edits it |
 | `stream`          | bool            | `true`                        | Stream replies into the view; `--no-stream` shows them whole |
 | `autosave`        | bool            | `false`                       | Update one session file after every reply (first write picks the timestamped name; manual `/save` still asks first) |
 

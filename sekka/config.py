@@ -44,6 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "labels": {"user": "You", "assistant": "Assistant"},
     "greeting": "",
     "player": "",
+    "note": "",
     "campaign": "",
     "theme": {
         "user": "cyan",
@@ -266,6 +267,12 @@ def validate_config(values: dict[str, Any]) -> None:
 
     _validate_knowledge_entries(values.get("knowledge"), "config 'knowledge'")
 
+    note = values.get("note", "")
+    if not isinstance(note, str) or len(note) > MAX_NOTE_CHARS:
+        raise ConfigError(
+            f"Config 'note' must be a string of at most {MAX_NOTE_CHARS} characters."
+        )
+
     labels = values.get("labels", {})
     for name in ("user", "assistant"):
         label = labels.get(name)
@@ -281,15 +288,17 @@ def validate_config(values: dict[str, Any]) -> None:
 
 CAMPAIGN_KEYS = {
     "name", "system_prompt", "labels", "knowledge", "temperature", "max_tokens",
-    "reasoning", "greeting", "player",
+    "reasoning", "greeting", "player", "note",
 }
+
+MAX_NOTE_CHARS = 20_000
 
 
 def validate_campaign(values: dict[str, Any]) -> None:
     """Raise ConfigError for a malformed campaign file."""
     if not isinstance(values, dict):
         raise ConfigError("Campaign file must contain a JSON object.")
-    for key in ("name", "system_prompt", "greeting", "player"):
+    for key in ("name", "system_prompt", "greeting", "player", "note"):
         if key in values and not isinstance(values[key], str):
             raise ConfigError(f"Campaign '{key}' must be a string.")
     if "temperature" in values and values["temperature"] is not None and (
@@ -301,6 +310,8 @@ def validate_campaign(values: dict[str, Any]) -> None:
         not isinstance(values["max_tokens"], int) or isinstance(values["max_tokens"], bool)
     ):
         raise ConfigError("Campaign 'max_tokens' must be an integer or null.")
+    if "note" in values and isinstance(values["note"], str) and len(values["note"]) > MAX_NOTE_CHARS:
+        raise ConfigError(f"Campaign 'note' must be at most {MAX_NOTE_CHARS} characters.")
     if "reasoning" in values and values["reasoning"] not in VALID_REASONING:
         raise ConfigError(f"Campaign 'reasoning' must be one of {sorted(VALID_REASONING)}.")
     if "labels" in values:
@@ -448,6 +459,35 @@ def load_config(
         campaign_path=campaign,
         campaign_keys=set(campaign_values) - cli_keys - env_keys,
     )
+
+
+def save_campaign_values(config: Config, values: dict[str, Any]) -> Optional[Path]:
+    """Merge ``values`` into the loaded campaign file (read-modify-write).
+
+    /config and /note change campaign-owned values; writing them to config.json
+    would be ignored next start (the campaign layer overrides it), so they are
+    written back into the campaign itself. Keys the file has that we don't touch
+    are preserved.
+    """
+    if config.campaign_path is None or not values:
+        return None
+    path = config.campaign_path
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"Could not update campaign file {path}: {exc}") from exc
+    data.update({k: copy.deepcopy(v) for k, v in values.items() if k in CAMPAIGN_KEYS})
+    if isinstance(data.get("note"), str) and len(data["note"]) > MAX_NOTE_CHARS:
+        raise ConfigError(f"Campaign 'note' must be at most {MAX_NOTE_CHARS} characters.")
+    try:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"Could not update campaign file {path}: {exc}") from exc
+    config.values.update(data)
+    config.campaign_keys |= set(values)
+    return path
 
 
 def save_config(config: Config, path: Optional[Path] = None) -> Path:

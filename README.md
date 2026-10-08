@@ -42,6 +42,9 @@ bots, and role playing games.
 - **Lorebook triggers**: give a knowledge file keywords (or mark it *always*)
   and it is pulled into context the moment the topic appears in your message -
   no tool calling needed, no extra round trip, works on any model
+- **Pinned state**: `/note` keeps a short block (inventory, injuries, promises,
+  "the door is still barred") in every request, so it survives summarising and
+  long scenes; `/note +text` appends and it saves itself into your campaign
 - Take-backs for collaborative storytelling: `/undo`, `/edit`, `/regen` and
   `/swipe` (multiple generated versions of a reply, cycled without losing them)
 - **Campaigns**: a `campaign.json` beside your config holds the system prompt,
@@ -127,6 +130,7 @@ file > defaults** - so one campaign can be pointed at any endpoint.
 | `/config`    | open the configuration screen (saved to the config file)    |
 | `/models`    | pick a model from the endpoint                              |
 | `/knowledge` | manage knowledge files offered to the model as tools        |
+| `/note`      | show / set / `+append` / clear the pinned running state    |
 | `/campaign`  | show the loaded campaign, or load one: `/campaign FILE`   |
 | `/thinking`  | show/hide model thinking & tool calls (also **ctrl+t**)     |
 | `/stop`      | stop the reply in flight (also **ctrl+x**)                  |

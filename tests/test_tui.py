@@ -6,7 +6,7 @@ from pathlib import Path
 from sekka import client, commands
 from sekka.client import ChatResponse, ModelInfo
 from sekka.config import DEFAULT_CONFIG, Config
-from textual.widgets import Button, Checkbox, Input, ListItem, Select
+from textual.widgets import Button, Checkbox, Input, ListItem, Select, TextArea
 
 _orig_stream = client.stream_chat_completion
 
@@ -1432,4 +1432,137 @@ def test_knowledge_screen_stores_keywords_and_always(tmp_path):
         assert saved["knowledge"][0]["keywords"] == ["tavern", "cold art"]
         assert saved["knowledge"][0]["always"] is True
         assert saved["knowledge"][0]["file"] == str(lore)
+    asyncio.run(go())
+
+
+# ------------------------------------------------------------ pinned note
+
+
+def _camp_app(tmp_path, **campaign):
+    """App with a campaign file loaded, plus the config file it sits beside."""
+    from sekka.config import load_config
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"model": "m"}))
+    camp = tmp_path / "campaign.json"
+    camp.write_text(json.dumps(campaign))
+    return SekkaApp(load_config(config_path=str(cfg_path), campaign_path=str(camp))), cfg_path, camp
+
+
+def test_note_set_append_clear_and_persist_to_campaign(tmp_path):
+    async def go():
+        app, cfg_path, camp = _camp_app(tmp_path, name="Camp", system_prompt="GM prompt")
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "/note PC carries a brass key and 12 shillings")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "brass key" in (app.config.get("note") or ""))
+            system = app._system_text()
+            assert "[Author's note" in system and "brass key" in system
+            assert system.index("[Author's note") > system.index("GM prompt"), "note should come last"
+
+            await run_typing(pilot, "/note +the key is hidden in her sleeve")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "hidden in her sleeve" in app.config["note"])
+            assert "brass key" in app.config["note"]        # append, not replace
+
+            saved = json.loads(camp.read_text())
+            assert "brass key" in saved["note"]
+            assert saved["system_prompt"] == "GM prompt"    # untouched keys preserved
+            assert "note" not in json.loads(cfg_path.read_text())  # not leaked to config
+
+            await run_typing(pilot, "/note clear")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.config["note"] == "")
+            assert "[Author's note" not in app._system_text()
+    asyncio.run(go())
+
+
+def test_note_without_campaign_is_saved_to_the_config_file(tmp_path):
+    async def go():
+        from sekka.config import load_config
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({"model": "m"}))
+        app = SekkaApp(load_config(config_path=str(cfg_path)))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "/note the door is still barred")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "barred" in json.loads(cfg_path.read_text()).get("note", ""))
+    asyncio.run(go())
+
+
+def test_saved_session_restores_the_note_as_it_was(tmp_path):
+    from sekka import storage
+    path = storage.save_history(
+        [{"role": "user", "content": "hi"}], directory=tmp_path,
+        meta={"note": "PC spent the key", "labels": {"user": "Player"}},
+    )
+    assert storage.load_session(path)[1]["note"] == "PC spent the key"
+
+    async def go():
+        app, _, _ = _camp_app(tmp_path, system_prompt="GM prompt", note="PC has the key")
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert app.config["note"] == "PC has the key"     # from the campaign
+            app._load_session(str(path))
+            await pilot.pause()
+            assert app.config["note"] == "PC spent the key"   # saved state wins
+            assert "PC spent the key" in app._system_text()
+            assert len(app.full_chat) == 1
+    asyncio.run(go())
+
+
+def test_config_screen_note_edit_goes_to_the_campaign(tmp_path):
+    async def go():
+        app, cfg_path, camp = _camp_app(tmp_path, system_prompt="GM prompt")
+        async with app.run_test(size=(110, 40)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfigScreen))
+            screen = app.screen
+            screen.query_one("#cfg_note", TextArea).load_text("PC is wounded, left arm")
+            screen.query_one("#cfg_system", TextArea).load_text("New GM prompt")
+            screen.query_one("#config_save", Button).press()
+            await wait_for(pilot, lambda: app.config["note"] == "PC is wounded, left arm")
+        saved_campaign = json.loads(camp.read_text())
+        assert saved_campaign["note"] == "PC is wounded, left arm"
+        assert saved_campaign["system_prompt"] == "New GM prompt"   # campaign-owned edits
+        saved_cfg = json.loads(cfg_path.read_text())
+        assert saved_cfg.get("system_prompt", "") != "New GM prompt"  # never to config
+        assert saved_cfg.get("note", "") != "PC is wounded, left arm"
+    asyncio.run(go())
+
+
+def test_note_state_alias_and_help_entry():
+    assert commands.resolve_command("state") == "note"
+    assert any(cmd == "/note" for cmd, _ in commands.COMMAND_HELP)
+
+
+def test_compaction_keeps_the_pinned_note_in_the_system_prompt():
+    """The note's whole point: it outlives summarised-away turns."""
+    async def go():
+        def fake_chat(endpoint, model, messages, **k):
+            if messages[0]["content"] == "You compress conversations.":
+                return ChatResponse(content="They traded and travelled.", completion_tokens=5, elapsed=0.1)
+            return ChatResponse(content="Aye.", completion_tokens=2, elapsed=0.1)
+        old = client.chat_completion
+        client.chat_completion = fake_chat
+        try:
+            cfg = make_config(
+                model="test-model", stream=False, context_window=4096,
+                context_mode="compact", note="PC carries a brass key",
+            )
+            app = SekkaApp(cfg)
+            async with app.run_test(size=(90, 30)) as pilot:
+                fill_chat(app)
+                await run_typing(pilot, "continue our chat")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "Aye.")
+                system = app._system_text()
+                assert "They traded and travelled." in system   # summary folded in
+                assert "PC carries a brass key" in system        # note survived
+                assert system.index("[Author's note") > system.index("They traded and travelled.")
+                sent = app._system_text()
+                assert sent == sent.strip() and "[Author's note" in sent
+        finally:
+            client.chat_completion = old
     asyncio.run(go())

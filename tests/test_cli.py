@@ -116,9 +116,11 @@ def test_all_scalar_config_keys_have_a_flag(monkeypatch):
         "1024", "--context-mode", "pause", "--save-dir", ".", "--save-format",
         "json", "--autosave",
     ])
-    # long prose/campaign-shaped keys live in files and /config, not flags;
+    # long prose/campaign-shaped keys live in files, /config and /note, not flags;
     # 'campaign' is a loader argument (it selects a file), not a value override
-    structured = {"labels", "theme", "keys", "knowledge", "greeting", "player", "campaign"}
+    structured = {
+        "labels", "theme", "keys", "knowledge", "greeting", "player", "note", "campaign"
+    }
     scalars = set(DEFAULT_CONFIG) - structured
     # the overrides dict must cover every scalar config key exactly
     assert set(box["overrides"]) == scalars
