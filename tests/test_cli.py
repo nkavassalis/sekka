@@ -59,6 +59,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "--save-format", "markdown",
         "--autosave",
         "--remember",
+        "--readonly",
         "--serve-host", "0.0.0.0",
         "--serve-port", "9000",
     ])
@@ -85,6 +86,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "repetition_penalty": 1.1,
         "stop": ["Player:", "GM:"],
         "remember": True,
+        "readonly": True,
         "serve_host": "0.0.0.0",
         "serve_port": 9000,
     }

@@ -73,6 +73,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="write --endpoint/--model into ./.sekka/config.json so the next bare"
              " sekka works (--remember / --no-remember)",
     )
+    parser.add_argument(
+        "--readonly",
+        action=argparse.BooleanOptionalAction,
+        help="play without touching settings: no /config edits, /models, /knowledge"
+             " or /campaign, and nothing is written to disk"
+             " (--readonly / --no-readonly)",
+    )
+    parser.add_argument(
+        "--serve-readonly",
+        action="store_true",
+        help="shorthand for `serve -- --readonly`: every browser tab is read-only",
+    )
     parser.add_argument("--save-dir", help="where /save and autosave write files")
     parser.add_argument(
         "--save-format", choices=["json", "markdown"], help="saved file format"
@@ -158,6 +170,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "save_format": args.save_format,
         "autosave": args.autosave,
         "remember": args.remember,
+        "readonly": args.readonly,
         "serve_host": args.serve_host,
         "serve_port": args.serve_port,
     }
@@ -170,12 +183,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.run_mode == "serve":
         from .serve import run_server
 
+        served_flags = passthrough + (["--readonly"] if args.serve_readonly else [])
         return run_server(
             config,
             host=args.serve_host,
             port=args.serve_port,
             title=args.serve_title,
-            extra_args=passthrough,
+            extra_args=served_flags,
             allow_public=args.serve_allow_public,
         )
 

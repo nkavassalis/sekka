@@ -160,6 +160,16 @@ so `SEKKA_API_KEY`/`--api-key` can never be silently persisted by /config or a
 is called for changed keys only. Don't simplify this back to writing
 `config.values`.
 
+- **Read-only mode (`readonly`, `--readonly`, `serve --serve-readonly`) is an allowlist by
+  behaviour, not a UI mask.** Blocking happens in the command dispatch (`_blocked()`) plus
+  the individual write paths - autosave, `_confirm_save`, `_handle_note`'s campaign write,
+  `_remember_cli_flags`, the resume picker - so a future command cannot silently bypass it.
+  Rationale for each refusal lives in docs/configuration.md: the sharp edges are the resume
+  picker (it lists *everyone's* saved sessions), `/campaign` (a different prompt), and any
+  write at all, since served tabs share one config/campaign/save directory. `/note` stays
+  allowed but in-memory only - a player needs it, and persisting it would write the host's
+  campaign file. `/config` shows a summary that never contains `api_key`. Host-passed
+  `--resume FILE` is honoured: that choice was made by whoever owns the config.
 - **Browser mode wraps, it does not reimplement.** `sekka serve` hands textual-serve a
   *shell command string* (`"<sys.executable> -m sekka" + passthrough`, every token
   `shlex.quote`d because it is handed to a shell) and textual-serve spawns that on a
@@ -271,6 +281,14 @@ is called for changed keys only. Don't simplify this back to writing
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.
+
+## Read-only mode — how it was verified (2026-10-08)
+
+`sekka serve --serve-readonly --serve-port 8490` with a config carrying a decoy
+`api_key`, driven over the websocket like a browser: boot line showed the read-only banner,
+`/config` printed the summary with the endpoint visible and the key absent from the frame
+stream, `/models` was refused, `/roll 2d6+3` still rolled. Plus unit/functional tests for
+each blocked command, the in-memory-only note, and autosave writing nothing.
 
 ## Browser mode — how it was verified (2026-10-08)
 

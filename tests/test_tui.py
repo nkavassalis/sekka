@@ -1895,3 +1895,122 @@ def test_help_points_at_the_quick_reference():
             await pilot.press("enter")
             await wait_for(pilot, lambda: any("/play" in t for _, t in app.ui_lines))
     asyncio.run(go())
+
+
+# --------------------------------------------------------------- read-only mode
+
+
+def test_read_only_locks_the_configuring_commands():
+    async def go():
+        app = SekkaApp(make_config(model="m", readonly=True))
+        async with app.run_test(size=(90, 36)) as pilot:
+            await wait_for(pilot, lambda: any("Read-only mode" in t for _, t in app.ui_lines))
+            for command, needle in (
+                ("/models", "/models"),
+                ("/knowledge", "/knowledge"),
+                ("/campaign other.json", "switching campaigns"),
+                ("/save", "/save"),
+            ):
+                await run_typing(pilot, command)
+                await pilot.press("enter")
+                await wait_for(pilot, lambda n=needle: any(
+                    "Read-only mode" in t and n in t for _, t in app.ui_lines
+                ))
+                assert app.screen.__class__.__name__ == "Screen"   # nothing pushed
+            assert app.chat == []                          # nothing was mutated
+    asyncio.run(go())
+
+
+def test_read_only_config_summary_shows_facts_but_never_the_key():
+    secret = "sk-super-secret-value"
+
+    async def go():
+        app = SekkaApp(make_config(model="m", readonly=True, api_key=secret,
+                                   endpoint="http://example:8000/v1"))
+        async with app.run_test(size=(90, 36)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: any("Read-only mode (settings are locked)" in t
+                                             for _, t in app.ui_lines))
+            text = history_text(app)
+            assert "http://example:8000/v1" in text        # endpoint is fine to show
+            assert secret not in text
+            assert not isinstance(app.screen, ConfigScreen)
+    asyncio.run(go())
+
+
+def test_read_only_still_plays_dice_ooc_and_notes(tmp_path, monkeypatch):
+    """The RP loop must survive: only configuration and disk writes are locked."""
+    client.stream_chat_completion = fake_stream([("content", "The door is barred.")])
+    campaign = tmp_path / "campaign.json"
+    campaign.write_text(json.dumps({"name": "Test", "system_prompt": "Be terse."}))
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    async def go():
+        values = copy.deepcopy(DEFAULT_CONFIG)
+        values.update(stream=True, readonly=True, model="m", name="Test",
+                      system_prompt="Be terse.")
+        cfg = Config(values, campaign_path=campaign, campaign_keys={"system_prompt", "name"})
+        app = SekkaApp(cfg)
+        async with app.run_test(size=(90, 36)) as pilot:
+            await wait_for(pilot, lambda: app.ui_lines)    # boot line posted
+            before = campaign.read_text()
+
+            await run_typing(pilot, "/roll 1d4+1")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: any("dice:" in t for _, t in app.ui_lines))
+
+            await run_typing(pilot, "/note +lit torch")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.config["note"] == "lit torch")
+            await wait_for(pilot, lambda: any("this session only" in t for _, t in app.ui_lines))
+            assert campaign.read_text() == before          # campaign file untouched
+
+            await run_typing(pilot, "I try the door")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: app.chat[-1]["content"] == "The door is barred.")
+            assert "[dice] 1d4+1 = " in app.chat[-2]["content"]
+    try:
+        asyncio.run(go())
+    finally:
+        client.stream_chat_completion = _orig_stream
+
+
+def test_read_only_config_does_not_write_files_on_quit(tmp_path, monkeypatch):
+    """Autosave must not silently create files either."""
+    from sekka.config import Config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    values = copy.deepcopy(DEFAULT_CONFIG)
+    values.update(autosave=True, readonly=True, model="m", stream=False)
+    cfg = Config(values, path=None)
+    app = SekkaApp(cfg)
+
+    def fake_chat(endpoint, model, messages, **kwargs):
+        from sekka.client import ChatResponse
+        return ChatResponse(content="ok", completion_tokens=5, elapsed=0.5)
+
+    old = client.chat_completion
+    client.chat_completion = fake_chat
+    try:
+        async def go():
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hello")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["role"] == "assistant")
+        asyncio.run(go())
+    finally:
+        client.chat_completion = old
+    assert app.autosave_path is None
+    assert not list(Path(tmp_path).rglob("sekka_*.json"))
+
+
+def test_serve_readonly_flag_reaches_every_tab():
+    from sekka.cli import build_parser, split_passthrough
+    from sekka.serve import serve_command
+
+    own, extra = split_passthrough(["serve", "--serve-readonly"])
+    args = build_parser().parse_args(own)
+    assert args.serve_readonly is True
+    served = serve_command(extra + ["--readonly"])
+    assert "--readonly" in served.split()
