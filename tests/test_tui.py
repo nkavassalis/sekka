@@ -1720,3 +1720,178 @@ def test_config_screen_round_trips_a_sampler_value():
             await wait_for(pilot, lambda: app.config["top_p"] == 0.8)
         assert app.config["stop"] == ["Player:", "GM:"]
     asyncio.run(go())
+
+
+# ------------------------------------------------------ remembering CLI flags
+
+
+def _fresh_dir(tmp_path):
+    (tmp_path / ".sekka").mkdir(exist_ok=True)
+    return tmp_path
+
+
+def test_endpoint_and_model_get_remembered_for_the_next_run(tmp_path, monkeypatch):
+    from sekka.config import load_config
+    from sekka import config as config_module
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    cfg = load_config({"endpoint": "http://remembered:8000/v1", "model": "m1"})
+    assert cfg["model"] == "m1"
+    written, keys = config_module.remember_cli_values(cfg)
+    assert written == tmp_path / ".sekka" / "config.json"
+    assert sorted(keys) == ["endpoint", "model"]
+    saved = json.loads(written.read_text())
+    assert saved["endpoint"] == "http://remembered:8000/v1" and saved["model"] == "m1"
+
+    # a bare load now sees the same values, and nothing is rewritten on re-run
+    again = load_config({"endpoint": "http://remembered:8000/v1", "model": "m1"})
+    assert again["endpoint"] == "http://remembered:8000/v1"
+    before = written.read_text()
+    assert config_module.remember_cli_values(again) == (None, [])
+    assert written.read_text() == before
+
+
+def test_api_key_and_env_values_are_never_remembered(tmp_path, monkeypatch):
+    from sekka.config import load_config
+    from sekka import config as config_module
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".sekka").mkdir()
+    monkeypatch.setenv("SEKKA_ENDPOINT", "http://from-env:8000/v1")
+    cfg = load_config({"endpoint": "http://from-cli:8000/v1", "api_key": "sk-secret"})
+    written, keys = config_module.remember_cli_values(cfg)
+    assert written is None and keys == []          # env owns endpoint, api_key never qualifies
+    cfg_file = tmp_path / ".sekka" / "config.json"
+    assert not cfg_file.exists()                   # nothing was written at all
+
+
+def test_remember_keeps_other_keys_in_an_existing_config(tmp_path, monkeypatch):
+    from sekka.config import load_config
+    from sekka import config as config_module
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".sekka").mkdir()
+    cfg_file = tmp_path / ".sekka" / "config.json"
+    cfg_file.write_text(json.dumps({"system_prompt": "curated", "context_mode": "rolling"}))
+    cfg = load_config({"endpoint": "http://h:8000/v1"})
+    config_module.remember_cli_values(cfg)
+    saved = json.loads(cfg_file.read_text())
+    assert saved["system_prompt"] == "curated" and saved["context_mode"] == "rolling"
+    assert saved["endpoint"] == "http://h:8000/v1"
+
+
+def test_no_remember_flag_writes_nothing(tmp_path, monkeypatch):
+    from sekka.config import load_config
+    from sekka import config as config_module
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".sekka").mkdir()
+    cfg = load_config({"endpoint": "http://h:8000/v1", "remember": False})
+    assert config_module.remember_cli_values(cfg) == (None, [])
+    assert not (tmp_path / ".sekka" / "config.json").exists()
+
+
+def test_boot_tells_the_user_bare_sekka_now_works(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    from sekka.config import load_config
+    app = SekkaApp(load_config({"endpoint": "http://h:8000/v1", "model": "m"}))
+    client.stream_chat_completion = fake_stream([("content", "hi")])
+    try:
+        async def go():
+            async with app.run_test(size=(90, 30)) as pilot:
+                await pilot.pause()
+                text = history_text(app)
+                assert "Remembered endpoint and model" in text
+                assert "next time just run: sekka" in text
+        asyncio.run(go())
+    finally:
+        client.stream_chat_completion = _orig_stream
+
+
+def test_user_level_config_is_not_dirtied_by_a_project_endpoint(tmp_path, monkeypatch):
+    """~/.sekka/config.json must not collect one directory's endpoint."""
+    import sys
+    from sekka.config import load_config
+    from sekka import config as config_module
+
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    project.mkdir()
+    (home / ".sekka").mkdir(parents=True)
+    user_cfg = home / ".sekka" / "config.json"
+    user_cfg.write_text(json.dumps({"temperature": 0.2}))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.chdir(project)
+
+    cfg = load_config({"endpoint": "http://project-box:8000/v1"})
+    assert cfg.path == user_cfg                      # discovery still found the user file
+    written, keys = config_module.remember_cli_values(cfg)
+    assert written == project / ".sekka" / "config.json"
+    assert json.loads(user_cfg.read_text()) == {"temperature": 0.2}   # untouched
+    saved = json.loads(written.read_text())
+    assert saved["endpoint"] == "http://project-box:8000/v1"
+    # and the local file now wins, so a bare `sekka` works here
+    bare = load_config()
+    assert bare["endpoint"] == "http://project-box:8000/v1"
+    assert bare["temperature"] == 0.2                # user defaults still apply
+
+
+def test_picking_a_model_from_the_picker_is_remembered(tmp_path, monkeypatch):
+    """A choice the user made is persisted; the auto-pick of one model is not."""
+    from sekka.config import load_config
+    import sekka.client as client_module
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".sekka").mkdir()
+    cfg_path = tmp_path / ".sekka" / "config.json"
+    cfg_path.write_text(json.dumps({"endpoint": "http://h:8000/v1"}))
+
+    old = client_module.list_models
+    client_module.list_models = lambda *a, **k: [
+        ModelInfo(id="alpha"), ModelInfo(id="beta")
+    ]
+    try:
+        app = SekkaApp(load_config())
+        async def go():
+            async with app.run_test(size=(90, 30)) as pilot:
+                await wait_for(pilot, lambda: app.screen.__class__.__name__ == "ModelScreen")
+                await pilot.press("down")          # -> beta
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.config["model"] == "beta")
+        asyncio.run(go())
+    finally:
+        client_module.list_models = old
+    assert json.loads(cfg_path.read_text())["model"] == "beta"
+
+
+def test_play_prints_the_grouped_quick_reference():
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        async with app.run_test(size=(90, 40)) as pilot:
+            await run_typing(pilot, "/play")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: any("quick reference" in t for _, t in app.ui_lines))
+            text = history_text(app)
+            for needle in ("2d6+3", "out of character", "/note", "/regen", "/swipe", "ctrl+x"):
+                assert needle in text, needle
+            await run_typing(pilot, "/rp")          # alias
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: sum(1 for _, t in app.ui_lines if "quick reference" in t) == 2)
+    asyncio.run(go())
+
+
+def test_help_points_at_the_quick_reference():
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        async with app.run_test(size=(90, 40)) as pilot:
+            await run_typing(pilot, "/help")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: any("/play" in t for _, t in app.ui_lines))
+    asyncio.run(go())

@@ -160,6 +160,12 @@ so `SEKKA_API_KEY`/`--api-key` can never be silently persisted by /config or a
 is called for changed keys only. Don't simplify this back to writing
 `config.values`.
 
+- **`/play` (alias `/rp`) prints the roleplaying cheat sheet in-app**, built from
+  `commands.PLAY_HELP` (groups: scenes / takes / world / session) via
+  `play_help_text()`. Do not hardcode that text in the TUI or README:
+  `test_play_groups_cover_the_documented_commands` fails if a group cites a
+  command that `COMMAND_HELP` does not know, which is what keeps the sheet from
+  drifting. `/help` ends with a pointer to it.
 - **Streaming is the default** (`stream: true`, `--stream/--no-stream`).
   `client.stream_chat_completion()` yields cumulative-progress `StreamEvent`s;
   the TUI mounts the assistant `Static` on the first token (which also kills the
