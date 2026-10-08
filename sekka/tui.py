@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
+import threading
 import re
 import time
 from pathlib import Path
@@ -234,6 +235,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                     allow_blank=False,
                     id="cfg_save_format",
                 )
+                yield Checkbox("Stream replies token by token", value=bool(values.get("stream", True)), id="cfg_stream")
                 yield Checkbox("Autosave history after every reply", value=bool(values.get("autosave")), id="cfg_autosave")
             with Vertical(id="config_buttons"):
                 yield Button("Save", id="config_save", variant="primary")
@@ -310,6 +312,7 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "reasoning": str(self.query_one("#cfg_reasoning", Select).value),
                 "save_dir": self.query_one("#cfg_save_dir", Input).value.strip() or ".",
                 "save_format": str(self.query_one("#cfg_save_format", Select).value),
+                "stream": bool(self.query_one("#cfg_stream", Checkbox).value),
                 "autosave": bool(self.query_one("#cfg_autosave", Checkbox).value),
             }
         )
@@ -555,6 +558,7 @@ class SekkaApp(App):
     BINDINGS = [
         Binding("ctrl+c", "quit_armed", "Quit (twice)", priority=True),
         Binding("ctrl+t", "toggle_thinking", "Thinking"),
+        Binding("ctrl+x", "stop_generation", "Stop reply", priority=True),
         Binding("escape", "clear_input", "Clear input"),
     ]
 
@@ -570,6 +574,10 @@ class SekkaApp(App):
         self.lore: dict[str, str] = {}  # knowledge already read this session {path: text}
         self.autosave_path: Optional[Path] = None
         self.busy = False
+        self._stop_event = threading.Event()  # aborts an in-flight streamed reply
+        self._stream_widget: Optional[Static] = None  # live assistant line while streaming
+        self._stream_text = ""
+        self._thinking_reasoning_widget: Optional[Static] = None
         self.show_thinking = False  # ctrl+t / /thinking; always off at startup
         self._quit_arm = 0.0
         self.context_used = 0  # exact after a reply (usage), else estimate
@@ -707,14 +715,21 @@ class SekkaApp(App):
     def _history(self) -> VerticalScroll:
         return self.query_one("#history", VerticalScroll)
 
+    def _at_bottom(self) -> bool:
+        """True when the history view sits at the end (nothing left to read above)."""
+        h = self._history()
+        return h.scroll_y >= h.virtual_size.height - h.region.height - 1
+
     def _append(self, text: str, role: str, log: bool = True) -> Static:
         widget = Static(text, classes=f"msg-{role}", markup=False)
         if role in self.HIDDEN_KINDS:
             widget.styles.display = "block" if self.show_thinking else "none"
         if log:
             self.ui_lines.append((role, text))
+        pinned = self._at_bottom()  # don't yank the view down if the user scrolled up
         self._history().mount(widget)
-        self._history().scroll_end(animate=False)
+        if pinned:
+            self._history().scroll_end(animate=False)
         return widget
 
     def _sys(self, text: str, error: bool = False) -> None:
@@ -745,6 +760,14 @@ class SekkaApp(App):
             return
         self._quit_arm = now
         self.notify("Press ctrl+c again to quit", timeout=2.0)
+
+    def action_stop_generation(self) -> None:
+        """ctrl+x: keep whatever has streamed so far, drop the rest of the reply."""
+        if not self.busy:
+            self.notify("Nothing is being generated.", timeout=2.0)
+            return
+        self._stop_event.set()
+        self.notify("Stopping reply...", timeout=2.0)
 
     def action_clear_input(self) -> None:
         editor = self.query_one("#input", ChatInput)
@@ -974,24 +997,29 @@ class SekkaApp(App):
 
     # ------------------------------------------------------------- chat worker
 
-    @work(exclusive=True, group="chat")
-    async def _chat_worker(self) -> None:
-        cfg = self.config.values
-        messages: list[dict[str, Any]] = []
-        system_prompt = self._system_text()
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.extend(self.chat)
-        tools, tool_files = self._knowledge_tools()
-        loaded_now: dict[str, str] = {}
-        rounds = 0
-        total_completion = 0
-        last_prompt: Optional[int] = None
-        last_elapsed = 0.0
-        try:
-            while True:
-                resp = await asyncio.to_thread(
-                    client.chat_completion,
+    async def _stream_round(
+        self,
+        cfg: dict[str, Any],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> client.StreamEvent:
+        """Run one streamed round: HTTP in a worker thread, UI updated on this one.
+
+        Yields progress into an asyncio queue so the reply appears token by
+        token while the socket is still being read, and so ctrl+x can abort it.
+        """
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def post(value: Any) -> None:
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, value)
+            except RuntimeError:
+                pass  # app already closed; this stream is abandoned
+
+        def pump() -> None:
+            try:
+                for ev in client.stream_chat_completion(
                     cfg["endpoint"],
                     cfg["model"],
                     messages,
@@ -1001,17 +1029,141 @@ class SekkaApp(App):
                     timeout=cfg.get("request_timeout", 300),
                     tools=tools or None,
                     reasoning_effort=cfg.get("reasoning", "medium"),
-                )
+                    stop_event=self._stop_event,
+                ):
+                    post(ev)
+            except client.ClientError as exc:
+                post(exc)
+            except Exception as exc:  # noqa: BLE001 - surfaced like an endpoint error
+                post(client.ClientError(str(exc)))
+            finally:
+                post(None)
+
+        producer = asyncio.create_task(asyncio.to_thread(pump))
+        final: Optional[client.StreamEvent] = None
+        progress: Optional[client.StreamEvent] = None
+        abandoned = False
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except TimeoutError:
+                    # An endpoint that has gone quiet has nothing to poll on and a
+                    # blocked socket read cannot be interrupted portably, so we
+                    # release the UI at once and let the read finish abandoned.
+                    if self._stop_event.is_set():
+                        abandoned = True
+                        break
+                    continue
+                if item is None:
+                    break
+                if isinstance(item, client.ClientError):
+                    raise item
+                self._show_round(item)
+                progress = item
+                if item.message:  # only the closing event carries the message
+                    final = item
+                    if self._stop_event.is_set():
+                        break
+        finally:
+            if abandoned:
+                producer.add_done_callback(lambda task: task.exception())
+            else:
+                await producer
+        if abandoned:
+            final = progress
+        if final is None:
+            raise client.ClientError("Endpoint closed the stream without a reply.")
+        if self._stop_event.is_set():
+            final.stopped = True
+        return final
+
+    def _show_round(self, ev: client.StreamEvent) -> None:
+        """Paint progress: create the assistant line on the first token, then update it."""
+        label = self.config["labels"]["assistant"]
+        if ev.reasoning.strip():
+            widget = self._thinking_reasoning_widget
+            if widget is None or not widget.is_mounted:
+                widget = self._append(f"{label} thinking:\n{ev.reasoning.strip()}", "reasoning")
+                self._thinking_reasoning_widget = widget
+            else:
+                widget.update(f"{label} thinking:\n{ev.reasoning.strip()}")
+        if ev.content:
+            if self._stream_widget is None:
+                self._stop_thinking()  # first tokens beat the snowflake
+                # logged separately once the round settles, with the final text
+                self._stream_widget = self._append(f"{label}:\n{ev.content}", "assistant", log=False)
+                self._stream_text = ev.content
+            elif ev.content != self._stream_text:
+                self._stream_widget.update(f"{label}:\n{ev.content}")
+                self._stream_text = ev.content
+                if self._at_bottom():
+                    self._history().scroll_end(animate=False)
+
+    @work(exclusive=True, group="chat")
+    async def _chat_worker(self) -> None:
+        """Send the conversation; streamed replies land in the view as they arrive."""
+        cfg = self.config.values
+        messages: list[dict[str, Any]] = []
+        system_prompt = self._system_text()
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.extend(self.chat)
+        assistant_label = self.config["labels"]["assistant"]
+        tools, tool_files = self._knowledge_tools()
+        loaded_now: dict[str, str] = {}
+        rounds = 0
+        total_completion = 0
+        last_prompt: Optional[int] = None
+        last_elapsed = 0.0
+        stopped = False
+        self._stop_event.clear()
+        self._stream_widget = None
+        self._stream_text = ""
+        self._thinking_reasoning_widget = None
+        try:
+            while True:
+                if cfg.get("stream", True):
+                    resp = await self._stream_round(cfg, messages, tools)
+                else:
+                    r = await asyncio.to_thread(
+                        client.chat_completion,
+                        cfg["endpoint"],
+                        cfg["model"],
+                        messages,
+                        api_key=cfg.get("api_key", ""),
+                        temperature=cfg.get("temperature"),
+                        max_tokens=cfg.get("max_tokens"),
+                        timeout=cfg.get("request_timeout", 300),
+                        tools=tools or None,
+                        reasoning_effort=cfg.get("reasoning", "medium"),
+                    )
+                    resp = client.StreamEvent(
+                        content=r.content,
+                        reasoning=r.reasoning,
+                        tool_calls=r.tool_calls,
+                        message=r.message,
+                        prompt_tokens=r.prompt_tokens,
+                        completion_tokens=r.completion_tokens,
+                        elapsed=r.elapsed,
+                    )
+                    self._show_round(resp)
+                stopped = stopped or resp.stopped
                 if resp.prompt_tokens is not None:
                     last_prompt = resp.prompt_tokens
                 total_completion += resp.completion_tokens or 0
                 last_elapsed += resp.elapsed
-                if resp.reasoning.strip():
-                    self._append(
-                        f"{self.config['labels']['assistant']} thinking:\n{resp.reasoning.strip()}",
-                        "reasoning",
-                    )
-                if resp.tool_calls and tool_files and rounds < self.KNOWLEDGE_TOOL_ROUNDS:
+                if (
+                    resp.tool_calls
+                    and tool_files
+                    and rounds < self.KNOWLEDGE_TOOL_ROUNDS
+                    and not stopped
+                ):
+                    if resp.content.strip():
+                        # preamble the model wrote alongside the tool call
+                        self.ui_lines.append(
+                            ("assistant", f"{assistant_label}:\n{resp.content.strip('\n')}"),
+                        )
                     rounds += 1
                     messages.append(
                         resp.message
@@ -1054,18 +1206,25 @@ class SekkaApp(App):
         if last_prompt is not None:
             self.context_used = last_prompt + total_completion
         self._update_ctx_label()
-        self.chat.append({"role": "assistant", "content": resp.content})
-        self.full_chat.append({"role": "assistant", "content": resp.content})
-        assistant_label = self.config["labels"]["assistant"]
+        text = resp.content
+        if stopped:
+            text = (text + " …[stopped]") if text.strip() else "[stopped - no output]"
+        self.chat.append({"role": "assistant", "content": text})
+        self.full_chat.append({"role": "assistant", "content": text})
         # models often pad replies with blank lines; don't render them
-        shown = resp.content.strip("\n") if resp.content.strip() else resp.content
-        self._append(f"{assistant_label}:\n{shown}", "assistant")
+        shown = text.strip("\n") if text.strip() else text
+        if self._stream_widget is not None and self._stream_widget.is_mounted:
+            self._stream_widget.update(f"{assistant_label}:\n{shown}")  # already on screen
+            self.ui_lines.append(("assistant", f"{assistant_label}:\n{shown}"))
+        else:
+            self._append(f"{assistant_label}:\n{shown}", "assistant")
         self._append(format_stats(last_elapsed, total_completion), "stats")
         if self.config.get("autosave") and self.full_chat:
             path = self._save_history(autosave=True)
             if path:
                 self._append(f"(autosaved to {path})", "stats")
-        self._history().scroll_end(animate=False)
+        if self._at_bottom():
+            self._history().scroll_end(animate=False)
 
     # --------------------------------------------------------------- commands
 
@@ -1085,6 +1244,7 @@ class SekkaApp(App):
                 f"  {keys['scroll_down']:<9} scroll history down",
                 "  ctrl+c    quit (press twice; copies a selection if one exists)",
                 "  ctrl+t    show/hide model thinking & tool calls",
+                "  ctrl+x    stop the reply being generated (keeps what arrived)",
                 "  escape    clear the input box",
                 "(key bindings and colors are configured in the config file)",
             ]
@@ -1111,6 +1271,8 @@ class SekkaApp(App):
             self.push_screen(KnowledgeScreen(self.config))
         elif command == "thinking":
             self.action_toggle_thinking()
+        elif command == "stop":
+            self.action_stop_generation()
         elif command == "exit":
             self.exit()
 

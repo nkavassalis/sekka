@@ -3,7 +3,7 @@ import copy
 import json
 from pathlib import Path
 
-from sekka import client
+from sekka import client, commands
 from sekka.client import ChatResponse, ModelInfo
 from sekka.config import DEFAULT_CONFIG, Config
 from textual.widgets import Button, Checkbox, Input, ListItem, Select
@@ -12,7 +12,10 @@ from sekka.tui import ConfigScreen, ConfirmScreen, KnowledgeScreen, SekkaApp
 
 
 def make_config(**overrides):
+    # most TUI tests fake client.chat_completion; they opt out of streaming and
+    # dedicated tests cover the streamed path (and a real SSE server covers it functionally)
     values = copy.deepcopy(DEFAULT_CONFIG)
+    values["stream"] = False
     values.update(overrides)
     return Config(values)
 
@@ -881,4 +884,156 @@ def test_knowledge_read_once_then_kept_in_system_context(tmp_path):
                 assert "DRAGONS ARE BLUE" in msgs[0]["content"]
         finally:
             client.chat_completion = old
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------- streaming
+
+
+def fake_stream(chunks, delay=0.0, **fixed):
+    """Stand-in for client.stream_chat_completion: yields cumulative progress."""
+    def fake(endpoint, model, messages, **kwargs):
+        fake.seen_kwargs = kwargs
+        text = ""
+        reasoning = ""
+        for kind, piece in chunks:
+            if kind == "content":
+                text += piece
+            else:
+                reasoning += piece
+            yield client.StreamEvent(content=text, reasoning=reasoning)
+            if delay:
+                import time as _t; _t.sleep(delay)
+        msg = {"role": "assistant", "content": text or None}
+        if fixed.get("tool_calls"):
+            msg["tool_calls"] = fixed["tool_calls"]
+        yield client.StreamEvent(
+            content=text, reasoning=reasoning, message=msg,
+            prompt_tokens=fixed.get("prompt", 20), completion_tokens=fixed.get("completion", 4),
+            elapsed=0.3, stopped=fixed.get("stopped", False),
+        )
+    fake.seen_kwargs = {}
+    return fake
+
+
+def test_reply_streams_into_the_view_token_by_token():
+    async def go():
+        old = client.stream_chat_completion
+        client.stream_chat_completion = fake_stream(
+            [("content", "One "), ("content", "two "), ("content", "three.")], delay=0.2)
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "go")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app._stream_widget is not None)
+                first = str(app._stream_widget.render())
+                assert first.startswith("Assistant:\n") and "One two" not in first, (
+                    f"expected a partial line, got {first!r}"
+                )
+                await wait_for(pilot, lambda: not app.busy)
+                assert app.chat[-1]["content"] == "One two three."
+                assert "Assistant:\nOne two three." in history_text(app)
+                assert app._thinking_timer is None  # snowflake gone once tokens land
+        finally:
+            client.stream_chat_completion = old
+    asyncio.run(go())
+
+
+def test_ctrl_x_keeps_partial_reply():
+    async def go():
+        old = client.stream_chat_completion
+        client.stream_chat_completion = fake_stream(
+            [("content", "Alpha "), ("content", "Beta "), ("content", "Gamma")], delay=0.2)
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "go")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app._stream_widget is not None)
+                await pilot.press("ctrl+x")
+                await wait_for(pilot, lambda: not app.busy, timeout=3.0)
+                assert app.chat[-1]["content"].startswith("Alpha")
+                assert "[stopped]" in app.chat[-1]["content"]
+                assert "[stopped]" in history_text(app)
+        finally:
+            client.stream_chat_completion = old
+    asyncio.run(go())
+
+
+def test_ctrl_x_frees_the_ui_while_the_endpoint_is_quiet():
+    """Stop must release the editor even when no more tokens are arriving."""
+    async def go():
+        def fake(endpoint, model, messages, **kwargs):
+            yield client.StreamEvent(content="Partial")
+            import time as _t
+            _t.sleep(4)  # endpoint goes silent; client cannot be interrupted here
+            yield client.StreamEvent(content="Partial Late")
+        old = client.stream_chat_completion
+        client.stream_chat_completion = fake
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "go")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app._stream_widget is not None)
+                await pilot.press("ctrl+x")
+                await wait_for(pilot, lambda: not app.busy, timeout=2.0)
+                assert "Partial" in app.chat[-1]["content"]
+                assert "Late" not in app.chat[-1]["content"]
+        finally:
+            client.stream_chat_completion = old
+    asyncio.run(go())
+
+
+def test_stop_command_exists():
+    assert commands.resolve_command("stop") == "stop"
+
+
+def test_scrolled_up_history_is_not_yanked_by_new_replies():
+    async def go():
+        old = client.stream_chat_completion
+        client.stream_chat_completion = fake_stream([("content", "x" * 2000)])
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 24)) as pilot:
+                for i in range(6):
+                    await run_typing(pilot, f"filler message number {i} with some text")
+                    await pilot.press("enter")
+                    await wait_for(pilot, lambda: not app.busy)
+                history = app.query_one("#history")
+                await pilot.press("pageup")
+                await pilot.press("pageup")
+                parked = history.scroll_y
+                assert parked < history.virtual_size.height - history.region.height - 1
+                await run_typing(pilot, "triggers a reply")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy)
+                assert history.scroll_y == parked, "view was pulled to the bottom"
+                # and once back at the bottom it follows again
+                app.action_history_scroll_down()
+                history.scroll_end(animate=False)
+                await run_typing(pilot, "second")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy)
+                assert history.scroll_y >= history.virtual_size.height - history.region.height - 1
+        finally:
+            client.stream_chat_completion = old
+    asyncio.run(go())
+
+
+def test_config_screen_exposes_stream_toggle():
+    async def go():
+        app = SekkaApp(make_config(model="m", stream=True))
+        async with app.run_test(size=(100, 40)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfigScreen))
+            screen = app.screen
+            box = screen.query_one("#cfg_stream", Checkbox)
+            assert box.value is True
+            box.value = False
+            screen.query_one("#config_save", Button).press()
+            await wait_for(pilot, lambda: app.config["stream"] is False)
+            assert app.config["stream"] is False
     asyncio.run(go())

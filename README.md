@@ -22,6 +22,8 @@ bots, and role playing games.
 ## Features
 
 - Generic OpenAI-compatible endpoints (`/models` + `/chat/completions`)
+- **Streaming**: replies appear token by token (`--stream` / `--no-stream`),
+  with `ctrl+x` to stop a reply and keep what arrived
 - Model discovery: if no model is given, sekka lists the endpoint's models
   and lets you pick one (or auto-selects when there is exactly one)
 - Everything configurable via CLI flags, environment, or a JSON config file
@@ -29,6 +31,8 @@ bots, and role playing games.
 - `/save` — save the chat history to a timestamped file (asks first)
 - Optional autosave after every reply, updating one session file (off by default)
 - Configurable message colors and key bindings
+- History stops auto-scrolling when you scroll up to reread (it follows again
+  once you return to the bottom)
 - Dark bracketed timing line after each reply: `[1.4s, 38.2 tok/s]`
 - Sessions: `/save` writes a resumable JSON file, and `sekka -r session.json`
   (or bare `sekka -r` for a picker) continues where you left off
@@ -79,6 +83,7 @@ sekka [options]
 --history-percent N    chat history share of the screen (50-95)
 --context-window N     total context tokens for the meter (default: endpoint's)
 --context-mode MODE    pause|rolling|compact when the window fills
+--stream               show replies token by token (--stream / --no-stream)
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
@@ -107,6 +112,7 @@ Configuration precedence: **CLI flags > environment > config file > defaults**.
 | `/models` | re-fetch models from the endpoint and pick one          |
 | `/knowledge` | manage knowledge files offered to the model as tools |
 | `/thinking` | show/hide model thinking & tool calls (also **ctrl+t**)|
+| `/stop`     | stop the reply in flight (also **ctrl+x**)       |
 | `/clear`  | clear the on-screen and sent chat history               |
 | `/exit`   | quit (also **ctrl+c twice**)                            |
 
@@ -124,6 +130,7 @@ Defaults (configurable via the `keys` block in the config file, see
 | `up/down`   | move cursor inside the input    |
 | `ctrl+c`    | quit - press twice within 2 s (copies a selection if one exists) |
 | `ctrl+t`    | show/hide model thinking & tool calls |
+| `ctrl+x`    | stop the reply in flight (keeps what arrived) |
 | `escape`    | clear the input box             |
 
 Thinking and tool-call lines are hidden by default and always start hidden;

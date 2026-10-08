@@ -123,6 +123,10 @@ newer, and nothing heavier than Textual and Requests: the endpoint does the real
   <dd>The corner of the input box shows tokens used against the window. When it's full, Sekka
   can stop and tell you, roll the oldest turns off, or have the model compact them into a
   summary.</dd>
+  <dt>Replies as they are written</dt>
+  <dd>Answers stream in token by token, so a long reply is readable while it is
+  still being generated. <code>ctrl+x</code> stops a reply mid-stream and keeps
+  what arrived. Endpoints that won't stream just show the reply whole.</dd>
   <dt>Thinking, when you want it</dt>
   <dd>For reasoning models, <code>ctrl+t</code> shows the model's thinking and tool calls.
   They start hidden.</dd>

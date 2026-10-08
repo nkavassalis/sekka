@@ -35,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "context_window": None,
     "context_mode": "pause",
     "reasoning": "medium",
+    "stream": True,
     "knowledge": [],
     "autosave": False,
     "save_dir": ".",
@@ -181,6 +182,9 @@ def validate_config(values: dict[str, Any]) -> None:
         not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout < 0
     ):
         raise ConfigError("Config 'request_timeout' must be null, 0 (wait forever), or a positive number.")
+
+    if not isinstance(values.get("stream"), bool):
+        raise ConfigError("Config 'stream' must be true or false.")
 
     if values.get("reasoning") not in VALID_REASONING:
         raise ConfigError(

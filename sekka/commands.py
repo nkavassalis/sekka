@@ -13,6 +13,7 @@ COMMAND_ALIASES = {
     "models": "models",
     "knowledge": "knowledge",
     "thinking": "thinking",
+    "stop": "stop",
     "exit": "exit",
     "quit": "exit",
     "q": "exit",
@@ -25,6 +26,7 @@ COMMAND_HELP = [
     ("/models", "pick a model from the endpoint"),
     ("/knowledge", "attach knowledge files as tools for the model"),
     ("/thinking", "show/hide model thinking and tool calls (ctrl+t)"),
+    ("/stop", "stop the reply being generated; keeps what arrived (ctrl+x)"),
     ("/clear", "clear the chat history"),
     ("/exit", "quit sekka (same as ctrl+c twice)"),
 ]
