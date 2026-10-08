@@ -3,7 +3,8 @@
 A lightweight terminal (TUI) chat client for any **OpenAI-compatible** LLM
 endpoint (vLLM, llama.cpp server, Ollama's OpenAI API, LM Studio, ...).
 Built for lightweight model exploration, simple text knowledge-base chat
-bots, and role playing games.
+bots, and role playing games. It runs in your terminal, and `sekka serve`
+can put the identical screen in a browser instead.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -62,6 +63,8 @@ bots, and role playing games.
 - Context meter in the corner of the editor (`45k/262k`) with configurable
   behaviour when the window fills: pause, roll old messages out, or compact
   them into a summary
+- **Browser mode** (`sekka serve`): the same terminal session, streamed to a
+  page - not a rewritten web front end
 
 ## Install
 
@@ -161,6 +164,35 @@ file > defaults** - so one campaign can be pointed at any endpoint.
 | `/swipe`     | cycle through the other generated versions of that reply    |
 | `/clear`     | clear the on-screen and sent chat history                   |
 | `/exit`      | quit (also **ctrl+c twice**)                                |
+
+## Browser mode
+
+`sekka serve` shows the *same* screen in a browser:
+
+```bash
+pip install 'sekka[serve]'          # or: pipx inject sekka textual-serve
+sekka serve                         # http://127.0.0.1:8484
+sekka serve --serve-port 9000
+sekka serve -- --endpoint http://box:8000/v1    # flags after -- reach each session
+```
+
+It is not a second front end. Each browser tab runs a real `sekka` process on a
+pseudo-terminal and the terminal rendering is streamed to the page, so commands,
+keys, themes, streaming and saves behave exactly as they do in a terminal.
+
+Before relying on it:
+
+- **Every tab is its own chat.** Tabs share the config file, the campaign file
+  and the save directory, so two tabs can write the same files (last save wins).
+- **The browser keeps its shortcuts.** `ctrl+t` and similar may be eaten by the
+  browser; the slash commands (`/thinking`, `/ooc`, `/stop`, `/play`) always work.
+- **No auth, no TLS.** Binding is loopback-only by default and sekka refuses a
+  non-loopback host unless you pass `--serve-allow-public`. If you do, what you
+  probably want is an SSH tunnel (`ssh -L 8484:127.0.0.1:8484 host`) or a reverse
+  proxy with auth - anyone who reaches the page can use your endpoint and read
+  whatever is on screen.
+- Config discovery follows the **server's** working directory, so run
+  `sekka serve` from the folder whose campaign you want to play.
 
 ## Keys
 

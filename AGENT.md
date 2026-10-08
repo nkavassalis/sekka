@@ -160,6 +160,17 @@ so `SEKKA_API_KEY`/`--api-key` can never be silently persisted by /config or a
 is called for changed keys only. Don't simplify this back to writing
 `config.values`.
 
+- **Browser mode wraps, it does not reimplement.** `sekka serve` hands textual-serve a
+  *shell command string* (`"<sys.executable> -m sekka" + passthrough`, every token
+  `shlex.quote`d because it is handed to a shell) and textual-serve spawns that on a
+  pty per browser tab, streaming the terminal rendering. The web UI therefore *is*
+  the TUI: no HTML front end, no duplicated logic, no feature gap. Price of the
+  wrapper: each tab is a separate process, sharing the same config/campaign/save
+  files. **Gotchas**: textual-serve 1.x starts with `Server(...).serve()`, **not**
+  `.run()`; and 1.x takes a command string where older versions took an app factory —
+  recheck on version bumps. Served sessions discover config from the *server's* cwd,
+  so serve from the campaign folder. Loopback binding is enforced unless
+  `--serve-allow-public`, because the server has no auth and no TLS.
 - **`/play` (alias `/rp`) prints the roleplaying cheat sheet in-app**, built from
   `commands.PLAY_HELP` (groups: scenes / takes / world / session) via
   `play_help_text()`. Do not hardcode that text in the TUI or README:
@@ -260,6 +271,17 @@ is called for changed keys only. Don't simplify this back to writing
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.
+
+## Browser mode — how it was verified (2026-10-08)
+
+`sekka serve` on 127.0.0.1:8484, driven by an aiohttp websocket client speaking the
+protocol the browser itself uses (`["stdin", "..."]` out, binary ANSI frames in),
+against the real endpoint: index page 200; session subprocess spawned; boot line and
+`/play` cheat sheet present in the frame stream; keystrokes reached the app; `/save`
+from the browser session wrote a session file whose assistant turn held the model's
+reply (`\n\nwebok`). Chosen over a real browser because no Chromium is available here.
+Not verified: xterm.js rendering details, resize, copy/paste, browser-chord
+collisions, non-loopback binds, TLS/reverse proxies, Windows.
 
 ## Testing limitations / unverified
 

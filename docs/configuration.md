@@ -193,6 +193,29 @@ never volunteers them. Each has a CLI flag (`--top-p`, `--stop`, ...) and a fiel
 in `/config`. A campaign may carry them too, so a scenario can ask for a hotter
 sampler and get it.
 
+### Browser server (`sekka serve`)
+
+`sekka serve` needs the optional extra: `pip install 'sekka[serve]'`, or
+`pipx inject sekka textual-serve` for a pipx install. It serves the identical
+terminal UI on `http://127.0.0.1:8484`, using `serve_host` / `serve_port` from
+the config or `--serve-host` / `--serve-port`.
+
+- **Loopback by default, and enforced.** A non-loopback `serve_host` makes sekka
+  exit with an explanation; `--serve-allow-public` overrides that. The server has
+  no authentication and no TLS, so a reachable port means anyone can use your
+  endpoint and read the transcript. For remote use prefer an SSH tunnel
+  (`ssh -L 8484:127.0.0.1:8484 host`) or a reverse proxy with auth.
+- **Per-tab processes.** Each browser tab spawns its own `sekka` (config is read
+  per session, so config changes appear on the next tab). Sessions share the
+  config, campaign and save files.
+- **Flags after `--` are forwarded** to each spawned session:
+  `sekka serve -- --endpoint http://box:8000/v1`. Tokens are shell-quoted before
+  the server sees them, so odd characters stay data.
+- Config discovery uses the server process's working directory: `cd` into the
+  campaign folder first.
+- Browser-reserved chords (`ctrl+t`) may not reach the app; the slash-command
+  equivalents always do.
+
 ### The pinned note (`note`, `/note`)
 
 `note` is a short block of text appended **last** in the system prompt, so the
@@ -296,6 +319,8 @@ according to `context_mode`:
 | `player`          | string          | `""`                          | Your character, appended to the system prompt |
 | `note`            | string          | `""`                          | Pinned running state, sent last; `/note` edits it |
 | `remember`        | bool            | `true`                        | Write `--endpoint`/`--model` into the local config file |
+| `serve_host`      | string          | `"127.0.0.1"`                 | Bind address for `sekka serve` |
+| `serve_port`      | int             | `8484`                        | Port for `sekka serve` |
 | `top_p`             | float \| null   | `null` (endpoint)             | Nucleus sampling cutoff (0-1) |
 | `min_p`             | float \| null   | `null` (endpoint)             | min-p cutoff (vLLM / llama.cpp extension) |
 | `presence_penalty`  | float \| null   | `null` (endpoint)             | Presence penalty (-2 to 2) |
