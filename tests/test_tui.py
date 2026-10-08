@@ -1151,3 +1151,170 @@ def test_turn_edit_commands_are_listed_in_help():
         finally:
             client.stream_chat_completion = _orig_stream
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------- campaigns
+
+
+def write_campaign(dirpath, **values):
+    dirpath.mkdir(parents=True, exist_ok=True)
+    path = dirpath / "campaign.json"
+    path.write_text(json.dumps(values))
+    return path
+
+
+def test_campaign_greeting_opens_the_scene_and_enters_context():
+    async def go():
+        app = SekkaApp(make_config(model="m", greeting="The tavern is smoky tonight."))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert app.chat[0] == {"role": "assistant", "content": "The tavern is smoky tonight."}
+            assert "The tavern is smoky tonight." in history_text(app)
+            assert app.turn_alts == ["The tavern is smoky tonight."]
+            assert app.full_chat == app.chat
+    asyncio.run(go())
+
+
+def test_player_character_is_folded_into_the_system_prompt():
+    app = SekkaApp(make_config(model="m", player="Seraine, frost-mage, 12 shillings"))
+    text = app._system_text()
+    assert "You are a helpful assistant." in text
+    assert "[The player's character]\nSeraine, frost-mage, 12 shillings" in text
+    assert app._used_estimate() > 0
+
+
+def test_campaign_command_loads_and_persists(tmp_path):
+    async def go():
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({"model": "m", "save_dir": str(tmp_path)}))
+        camp = write_campaign(tmp_path / "camp", system_prompt="You are the GM.",
+                              labels={"user": "Player", "assistant": "GM"},
+                              greeting="You stand at the lock gate.")
+        from sekka.config import load_config
+        config = load_config(config_path=str(cfg_path))
+        app = SekkaApp(config)
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, f"/campaign {camp}")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "GM" in history_text(app))
+            assert app.config["system_prompt"] == "You are the GM."
+            assert app.config["labels"]["assistant"] == "GM"
+            assert "You stand at the lock gate." in history_text(app)
+            saved = json.loads(cfg_path.read_text())
+            assert saved["campaign"] == str(camp)          # remembered for next time
+            # campaign prose is never written into the config file
+            assert saved.get("system_prompt", "") != "You are the GM."
+    asyncio.run(go())
+
+
+def test_save_records_meta_and_resume_restores_the_campaign(tmp_path):
+    async def go():
+        camp = write_campaign(
+            tmp_path / "camp",
+            system_prompt="You are the GM of the Marches.",
+            labels={"user": "Player", "assistant": "GM"},
+        )
+        from sekka.config import load_config
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({"model": "m", "save_dir": str(tmp_path)}))
+        config = load_config(config_path=str(cfg_path), campaign_path=str(camp))
+        app = SekkaApp(config)
+        client.stream_chat_completion = fake_stream([("content", "A hooded figure nods.")])
+        try:
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "I look around")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                path = app._save_history()
+        finally:
+            client.stream_chat_completion = _orig_stream
+        payload = json.loads(Path(path).read_text())
+        assert payload["sekka_session"] == 2
+        assert payload["meta"]["campaign"] == str(camp)
+        assert payload["meta"]["labels"] == {"user": "Player", "assistant": "GM"}
+
+        # resume in a fresh app with no campaign loaded: it comes back as itself
+        plain = load_config(config_path=str(cfg_path))
+        assert plain.campaign_path is None
+        resumed = SekkaApp(plain, resume=str(path))
+        async with resumed.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert resumed.config["labels"]["assistant"] == "GM"
+            assert "GM of the Marches" in resumed._system_text()
+            assert len(resumed.full_chat) == 2
+            assert "GM:\nA hooded figure nods." in history_text(resumed)
+    asyncio.run(go())
+
+
+def test_markdown_saves_carry_no_meta_but_still_write(tmp_path):
+    from sekka import storage
+    path = storage.save_history(
+        [{"role": "user", "content": "hi"}], directory=tmp_path, fmt="markdown"
+    )
+    assert "hi" in path.read_text()
+    json_path = storage.save_history([{"role": "user", "content": "hi"}], directory=tmp_path)
+    assert "meta" not in json.loads(json_path.read_text())   # no session context to record
+
+
+def test_hostile_session_meta_is_ignored(tmp_path):
+    from sekka import storage
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps({
+        "messages": [{"role": "user", "content": "hi"}],
+        "meta": {"campaign": {"not": "a string"}, "labels": {"user": 17, "evil": "x"},
+                 "sudo": True},
+    }))
+    messages, meta = storage.load_session(f)
+    assert meta == {}
+    assert messages == [{"role": "user", "content": "hi"}]
+
+
+def test_regen_of_greeting_only_context_is_refused_not_crashed():
+    """Regression: /regen on a campaign greeting used to pop from an empty list."""
+    async def go():
+        def boom(*a, **k):
+            raise client.ClientError("no user message")
+        old = client.chat_completion
+        client.chat_completion = boom
+        try:
+            app = SekkaApp(make_config(model="m", stream=False, greeting="Hello traveller."))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "/regen")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: "no message to reply to" in history_text(app))
+                assert app.chat == [{"role": "assistant", "content": "Hello traveller."}]
+                await run_typing(pilot, "/undo")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.chat)
+                # undo on an empty log must also be survivable
+                await run_typing(pilot, "/undo")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: "Nothing to undo." in history_text(app))
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_empty_reply_is_reported_and_not_stored_as_an_empty_turn():
+    async def go():
+        def fake(endpoint, model, messages, **kwargs):
+            yield client.StreamEvent(reasoning="thinking hard", finish_reason="")
+            yield client.StreamEvent(
+                reasoning="thinking hard", message={"role": "assistant", "content": ""},
+                completion_tokens=120, elapsed=0.2, finish_reason="length",
+            )
+        old = client.stream_chat_completion
+        client.stream_chat_completion = fake
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "go")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy)
+                text = history_text(app)
+                assert "Empty reply" in text and "max tokens" in text
+                assert [m["role"] for m in app.chat] == ["user"]   # no blank assistant turn
+                assert len(app.full_chat) == 1
+        finally:
+            client.stream_chat_completion = _orig_stream
+    asyncio.run(go())

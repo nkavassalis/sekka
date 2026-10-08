@@ -72,6 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="resume a saved session; without FILE, pick one from the save directory",
     )
     parser.add_argument(
+        "--campaign",
+        help="campaign file (system prompt, cast, lore, greeting) to play as",
+    )
+    parser.add_argument(
         "--config",
         help="path to a config file (default: ./.sekka/config.json then ~/.sekka/config.json)",
     )
@@ -98,7 +102,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "autosave": args.autosave,
     }
     try:
-        config = load_config(overrides, config_path=args.config)
+        config = load_config(overrides, config_path=args.config, campaign_path=args.campaign)
     except ConfigError as exc:
         print(f"sekka: {exc}", file=sys.stderr)
         return 2

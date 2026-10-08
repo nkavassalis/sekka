@@ -27,7 +27,14 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DirectoryTree, Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from . import client, commands, storage
-from .config import DEFAULT_CONFIG, Config, save_config, validate_config, ConfigError
+from .config import (
+    DEFAULT_CONFIG,
+    Config,
+    deep_merge,
+    save_config,
+    validate_config,
+    ConfigError,
+)
 from .stats import estimate_tokens, format_stats, format_tokens
 
 
@@ -485,7 +492,7 @@ class KnowledgeScreen(ModalScreen[None]):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "k_path":
-            exists = os.path.isfile(os.path.expanduser(event.value.strip()))
+            exists = self._path_ok(event.value.strip())
             event.input.styles.color = "green" if exists else None
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -501,7 +508,7 @@ class KnowledgeScreen(ModalScreen[None]):
             if not path:
                 self.notify("Enter a file path first.", severity="error")
                 return
-            if not os.path.isfile(os.path.expanduser(path)):
+            if not self._path_ok(path):
                 self.notify("That file does not exist (path must be green).", severity="error")
                 return
             self._entries().append({"file": path, "description": desc, "enabled": False})
@@ -514,6 +521,12 @@ class KnowledgeScreen(ModalScreen[None]):
             del self._entries()[idx]
             self._refresh_list()
             self._persist()
+
+    def _path_ok(self, raw: str) -> bool:
+        """Accept paths relative to the campaign/config folder, not just to the cwd."""
+        if not raw.strip():
+            return False
+        return self.config.resolve_path(raw).is_file()
 
     def _got_path(self, path: Optional[str]) -> None:
         if path:
@@ -651,6 +664,20 @@ class SekkaApp(App):
             self._open_resume_picker()
         elif self.resume:
             self._load_session(self.resume)
+        else:
+            self._maybe_greet()
+
+    def _maybe_greet(self) -> None:
+        """A campaign's opening line opens the scene (and enters the context)."""
+        greeting = (self.config.get("greeting") or "").strip()
+        if not greeting or self.full_chat:
+            return
+        message = {"role": "assistant", "content": greeting}
+        self.chat.append(dict(message))
+        self.full_chat.append(dict(message))
+        self._append(self._display_text(message)[0], "assistant")
+        self.turn_alts = [greeting]
+        self._update_ctx_label()
 
     @work(exclusive=True, group="models")
     async def _fetch_context_size(self, model: str) -> None:
@@ -683,6 +710,9 @@ class SekkaApp(App):
         chat templates reject system messages anywhere but first.
         """
         parts = [(self.config["system_prompt"] or "").strip()]
+        player = (self.config.get("player") or "").strip()
+        if player:
+            parts.append("[The player's character]\n" + player)
         if self.summary:
             parts.append("[Summary of earlier conversation]\n" + self.summary)
         if self.lore:
@@ -832,7 +862,7 @@ class SekkaApp(App):
         if parsed.kind == "text":
             self._send_chat(parsed.text.strip())
         else:
-            self._handle_command(parsed.name)
+            self._handle_command(parsed.name, parsed.arg)
 
     def _roll_context(self, need: int, limit: int) -> int:
         """Drop oldest turns (keeping the latest exchange) until the budget fits."""
@@ -998,7 +1028,7 @@ class SekkaApp(App):
         for i, entry in enumerate(self.config.get("knowledge", [])):
             if not entry.get("enabled"):
                 continue
-            path = os.path.abspath(os.path.expanduser(entry["file"]))
+            path = str(self.config.resolve_path(entry["file"]).resolve())
             if path in self.lore:
                 continue  # already in the system context this session
             # OpenAI tool names must match [a-zA-Z0-9_-]{1,64}
@@ -1182,6 +1212,7 @@ class SekkaApp(App):
                         prompt_tokens=r.prompt_tokens,
                         completion_tokens=r.completion_tokens,
                         elapsed=r.elapsed,
+                        finish_reason=r.finish_reason,
                     )
                     self._show_round(resp)
                 stopped = stopped or resp.stopped
@@ -1229,7 +1260,8 @@ class SekkaApp(App):
             self.busy = False
             self._sys(f"Error: {exc}", error=True)
             # roll back the unanswered user turn so history stays consistent
-            self.chat.pop()
+            if self.chat and self.chat[-1]["role"] == "user":
+                self.chat.pop()
             if self.full_chat and self.full_chat[-1]["role"] == "user":
                 self.full_chat.pop()
             self._update_ctx_label()
@@ -1237,6 +1269,20 @@ class SekkaApp(App):
 
         self._stop_thinking()
         self.busy = False
+        if not stopped and not resp.tool_calls and not resp.content.strip():
+            # a blank turn is a failure worth reporting, not an empty message to store
+            if resp.finish_reason == "length" and resp.reasoning.strip():
+                hint = (
+                    "the model spent the whole reply budget on thinking - raise "
+                    "max tokens, or set reasoning to none"
+                )
+            elif resp.finish_reason == "length":
+                hint = "the reply hit the max tokens limit before any text"
+            else:
+                hint = "the endpoint returned no text"
+            self._sys(f"Empty reply ({hint}). Your message was kept; try again.", error=True)
+            self._update_ctx_label()
+            return
         # keep lore the model read so later turns need not re-fetch it
         self.lore.update(loaded_now)
         if last_prompt is not None:
@@ -1270,7 +1316,7 @@ class SekkaApp(App):
 
     # --------------------------------------------------------------- commands
 
-    def _handle_command(self, name: str) -> None:
+    def _handle_command(self, name: str, arg: str = "") -> None:
         command = commands.resolve_command(name)
         if command is None:
             self._sys(f"Unknown command: /{name} (try /help)", error=True)
@@ -1319,6 +1365,8 @@ class SekkaApp(App):
             self.action_stop_generation()
         elif command in ("undo", "edit", "regen", "swipe"):
             self._turn_edit(command)
+        elif command == "campaign":
+            self._handle_campaign(arg)
         elif command == "exit":
             self.exit()
 
@@ -1367,6 +1415,10 @@ class SekkaApp(App):
             if not self.chat or self.chat[-1]["role"] != "assistant":
                 self._sys("Nothing to regenerate yet.", error=True)
                 return
+            if not any(m["role"] == "user" for m in self.chat):
+                # e.g. /regen on a campaign greeting: nothing to answer yet
+                self._sys("Nothing to regenerate - there is no message to reply to.", error=True)
+                return
             if not self.turn_alts:
                 self.turn_alts = [self.chat[-1]["content"]]
             self.chat.pop()
@@ -1402,13 +1454,25 @@ class SekkaApp(App):
 
         self.push_screen(ConfirmScreen(f"Save chat history as {name}?"), done)
 
+    def _session_meta(self) -> dict:
+        """Enough to resume this session as itself (campaign, role labels)."""
+        meta: dict = {"labels": dict(self.config["labels"])}
+        if self.config.campaign_path is not None:
+            meta["campaign"] = str(self.config.campaign_path)
+        return meta
+
     def _save_history(self, autosave: bool = False) -> Optional[str]:
+        if self.config.get("save_format", "json") != "json":
+            meta = None  # markdown saves are for reading; only JSON resumes
+        else:
+            meta = self._session_meta()
         try:
             path = storage.save_history(
                 self.full_chat,
                 directory=self.config.get("save_dir", "."),
                 fmt=self.config.get("save_format", "json"),
                 overwrite=self.autosave_path if autosave else None,
+                meta=meta,
             )
         except OSError as exc:
             self._sys(f"Could not save: {exc}", error=True)
@@ -1450,10 +1514,11 @@ class SekkaApp(App):
 
     def _load_session(self, path: str) -> None:
         try:
-            messages = storage.load_history(path)
+            messages, meta = storage.load_session(path)
         except storage.StorageError as exc:
             self._sys(f"Could not resume {path}: {exc}", error=True)
             return
+        self._restore_session_meta(meta)
         self.chat = copy.deepcopy(messages)
         self.full_chat = copy.deepcopy(messages)
         # system notes never go mid-chat; fold them into the system prompt
@@ -1465,6 +1530,70 @@ class SekkaApp(App):
             )
         self._rebuild_history()
         self._sys(f"(resumed {len(messages)} messages from {path})")
+
+    def _restore_session_meta(self, meta: dict) -> None:
+        """Re-apply the campaign/labels a session was saved with, if we can find them."""
+        campaign = meta.get("campaign")
+        if campaign and self.config.campaign_path is None:
+            candidate = Path(campaign).expanduser()
+            if candidate.is_file():
+                self._apply_campaign(candidate, persist=False)
+            else:
+                self._sys(f"Session referenced campaign {campaign}, which is gone.", error=True)
+        labels = meta.get("labels")
+        if labels and self.config.campaign_path is None:
+            merged = {**self.config["labels"], **labels}
+            self.config["labels"] = merged
+            self.query_one("#input", ChatInput).set_keymap(self.config.keys)
+
+    def _apply_campaign(self, path: Path, persist: bool = True) -> None:
+        """Load a campaign file and fold it into the running configuration."""
+        from .config import _load_campaign
+
+        try:
+            values = _load_campaign(path)
+        except ConfigError as exc:
+            self._sys(f"Could not load campaign: {exc}", error=True)
+            return
+        self.config.campaign_path = path
+        self.config.campaign_keys = set(values)
+        self.config.values = deep_merge(self.config.to_dict(), values)
+        name = values.get("name") or path.stem
+        self._sys(f"Campaign: {name}")
+        self.query_one("#input", ChatInput).set_keymap(self.config.keys)
+        self.refresh_css()
+        if persist:
+            self.config["campaign"] = str(path)
+            try:
+                save_config(self.config)
+            except OSError as exc:
+                self._sys(f"Campaign active for this session, but config not saved: {exc}", error=True)
+        self._maybe_greet()
+
+    def _handle_campaign(self, arg: str) -> None:
+        """/campaign - show what is loaded, or switch to another one."""
+        if not arg:
+            if self.config.campaign_path is not None:
+                self._sys(
+                    f"Campaign: {self.config.get('name') or self.config.campaign_path.stem}"
+                    f"\n  file: {self.config.campaign_path}"
+                    f"\n  lore files: {len([e for e in self.config.get('knowledge', []) if e.get('enabled')])}"
+                    f"\n/load a different one with: /campaign path/to/campaign.json"
+                )
+            else:
+                self._sys(
+                    "No campaign loaded. Start one with /campaign path/to/campaign.json"
+                    " (see examples/roleplaying/ for the shape)."
+                )
+            return
+        path = self.config.resolve_path(arg)
+        if not path.is_file():
+            self._sys(f"No campaign file at {path}", error=True)
+            return
+        if self.full_chat:
+            self._sys("(campaign switched mid-scene: earlier turns keep their old framing)")
+        self._apply_campaign(path)
+        self._update_ctx_label()
 
     def _open_resume_picker(self) -> None:
         directory = Path(self.config.get("save_dir", ".")).expanduser()

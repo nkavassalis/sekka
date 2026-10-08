@@ -22,6 +22,7 @@ ENV_ENDPOINT = "SEKKA_ENDPOINT"
 ENV_MODEL = "SEKKA_MODEL"
 ENV_API_KEY = "SEKKA_API_KEY"
 ENV_CONFIG = "SEKKA_CONFIG"
+ENV_CAMPAIGN = "SEKKA_CAMPAIGN"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "endpoint": "http://localhost:8000/v1",
@@ -41,6 +42,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "save_dir": ".",
     "save_format": "json",
     "labels": {"user": "You", "assistant": "Assistant"},
+    "greeting": "",
+    "player": "",
+    "campaign": "",
     "theme": {
         "user": "cyan",
         "assistant": "magenta",
@@ -75,6 +79,8 @@ class Config:
         cli_keys: Optional[set[str]] = None,
         file_values: Optional[dict[str, Any]] = None,
         env_keys: Optional[set[str]] = None,
+        campaign_path: Optional[Path] = None,
+        campaign_keys: Optional[set[str]] = None,
     ) -> None:
         self.values = values
         self.path = path
@@ -82,16 +88,44 @@ class Config:
         self.env_keys = env_keys or set()
         # what the config file itself contained (so overrides never get persisted)
         self.file_values = file_values or {}
+        self.campaign_path = campaign_path
+        self.campaign_keys = campaign_keys or set()
 
     @property
     def overridden(self) -> set[str]:
-        """Keys whose current value came from the CLI/env, not the file."""
-        return self.cli_keys | self.env_keys
+        """Keys whose value came from CLI/env/campaign, not from the config file."""
+        return self.cli_keys | self.env_keys | self.campaign_keys
+
+    @property
+    def base_dir(self) -> Path:
+        """What relative paths (knowledge files) are resolved against."""
+        if self.campaign_path is not None:
+            return self.campaign_path.parent
+        if self.path is not None:
+            return self.path.parent
+        return Path.cwd()
+
+    def resolve_path(self, raw: str) -> Path:
+        """Absolute paths pass through; relative ones try base dir, then cwd.
+
+        Campaigns/configs shipped as a folder therefore keep working no matter
+        where sekka is launched from, while configs written for the older
+        "always cd into the folder" convention still resolve too.
+        """
+        p = Path(raw).expanduser()
+        if p.is_absolute():
+            return p
+        for base in (self.base_dir, Path.cwd()):
+            candidate = base / p
+            if candidate.is_file():
+                return candidate
+        return Path.cwd() / p
 
     def release_override(self, key: str) -> None:
         """The user explicitly set ``key`` in the UI: it may be persisted now."""
         self.cli_keys.discard(key)
         self.env_keys.discard(key)
+        self.campaign_keys.discard(key)
 
     def persistable(self) -> dict[str, Any]:
         """Values to write to disk: CLI/env overrides keep their file value
@@ -220,6 +254,106 @@ def validate_config(values: dict[str, Any]) -> None:
             raise ConfigError(f"Config key binding '{name}' must be a non-empty string.")
 
 
+CAMPAIGN_KEYS = {
+    "name", "system_prompt", "labels", "knowledge", "temperature", "max_tokens",
+    "reasoning", "greeting", "player",
+}
+
+
+def validate_campaign(values: dict[str, Any]) -> None:
+    """Raise ConfigError for a malformed campaign file."""
+    if not isinstance(values, dict):
+        raise ConfigError("Campaign file must contain a JSON object.")
+    for key in ("name", "system_prompt", "greeting", "player"):
+        if key in values and not isinstance(values[key], str):
+            raise ConfigError(f"Campaign '{key}' must be a string.")
+    if "temperature" in values and values["temperature"] is not None and (
+        not isinstance(values["temperature"], (int, float))
+        or isinstance(values["temperature"], bool)
+    ):
+        raise ConfigError("Campaign 'temperature' must be a number or null.")
+    if "max_tokens" in values and values["max_tokens"] is not None and (
+        not isinstance(values["max_tokens"], int) or isinstance(values["max_tokens"], bool)
+    ):
+        raise ConfigError("Campaign 'max_tokens' must be an integer or null.")
+    if "reasoning" in values and values["reasoning"] not in VALID_REASONING:
+        raise ConfigError(f"Campaign 'reasoning' must be one of {sorted(VALID_REASONING)}.")
+    if "labels" in values:
+        labels = values["labels"]
+        if not isinstance(labels, dict):
+            raise ConfigError("Campaign 'labels' must be an object.")
+        for name in ("user", "assistant"):
+            if name in labels and (
+                not isinstance(labels[name], str) or not labels[name].strip()
+                or len(labels[name]) > 30
+            ):
+                raise ConfigError(f"Campaign label '{name}' must be a short non-empty string.")
+    if "knowledge" in values:
+        entries = values["knowledge"]
+        if not isinstance(entries, list):
+            raise ConfigError("Campaign 'knowledge' must be a list.")
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or not isinstance(entry.get("file"), str)
+                or not entry["file"].strip()
+                or not isinstance(entry.get("description"), str)
+                or not isinstance(entry.get("enabled"), bool)
+            ):
+                raise ConfigError(
+                    "Each campaign knowledge entry needs 'file' (str), "
+                    "'description' (str) and 'enabled' (bool)."
+                )
+
+
+def _load_campaign(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"Campaign file {path} is not valid JSON: {exc}") from exc
+    except OSError as exc:
+        raise ConfigError(f"Could not read campaign file {path}: {exc}") from exc
+    validate_campaign(data)
+    return {k: v for k, v in data.items() if k in CAMPAIGN_KEYS}
+
+
+def find_campaign(
+    explicit: Optional[str] = None,
+    config_path: Optional[Path] = None,
+    file_values: Optional[dict[str, Any]] = None,
+) -> Optional[Path]:
+    """Which campaign file to use, or None.
+
+    Order: --campaign / SEKKA_CAMPAIGN, the 'campaign' key in the config file
+    (relative to that file), ``campaign.json`` next to the config, then
+    ``./.sekka/campaign.json``.
+    """
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not path.is_file():
+            raise ConfigError(f"Campaign file not found: {path}")
+        return path
+    env = os.environ.get(ENV_CAMPAIGN)
+    if env:
+        path = Path(env).expanduser()
+        if not path.is_file():
+            raise ConfigError(f"Campaign file not found (from {ENV_CAMPAIGN}): {path}")
+        return path
+    base = config_path.parent if config_path else Path.cwd()
+    named = (file_values or {}).get("campaign")
+    if isinstance(named, str) and named.strip():
+        path = Path(named).expanduser()
+        if not path.is_absolute() and config_path:
+            path = config_path.parent / path
+        if path.is_file():
+            return path
+        raise ConfigError(f"Campaign file from config not found: {path}")
+    for candidate in (base / "campaign.json", Path.cwd() / ".sekka" / "campaign.json"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def find_config_file(explicit: Optional[str] = None) -> Optional[Path]:
     """Return the config file path to use, or None when no file exists."""
     if explicit:
@@ -245,8 +379,13 @@ def default_save_path() -> Path:
 def load_config(
     cli_overrides: Optional[dict[str, Any]] = None,
     config_path: Optional[str] = None,
+    campaign_path: Optional[str] = None,
 ) -> Config:
-    """Build the effective configuration from all layers."""
+    """Build the effective configuration from all layers.
+
+    Precedence: CLI flags > environment > campaign file > config file > defaults,
+    so the same campaign can be pointed at another endpoint from the shell.
+    """
     values = copy.deepcopy(DEFAULT_CONFIG)
 
     path = find_config_file(config_path)
@@ -261,6 +400,12 @@ def load_config(
         if not isinstance(file_values, dict):
             raise ConfigError(f"Config file {path} must contain a JSON object.")
         values = deep_merge(values, file_values)
+
+    campaign = find_campaign(campaign_path, path, file_values)
+    campaign_values: dict[str, Any] = {}
+    if campaign is not None:
+        campaign_values = _load_campaign(campaign)
+        values = deep_merge(values, campaign_values)
 
     env_overrides = {}
     if os.environ.get(ENV_ENDPOINT):
@@ -284,7 +429,13 @@ def load_config(
         raise ConfigError(f"{exc}") from None
 
     return Config(
-        values, path=path, cli_keys=cli_keys, file_values=file_values, env_keys=env_keys
+        values,
+        path=path,
+        cli_keys=cli_keys,
+        file_values=file_values,
+        env_keys=env_keys,
+        campaign_path=campaign,
+        campaign_keys=set(campaign_values) - cli_keys - env_keys,
     )
 
 

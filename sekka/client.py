@@ -28,6 +28,7 @@ class ChatResponse:
     completion_tokens: Optional[int] = None
     elapsed: float = 0.0
     reasoning: str = ""  # chain-of-thought if the server exposes one
+    finish_reason: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     message: dict[str, Any] = field(default_factory=dict)  # raw assistant message
 
@@ -44,6 +45,7 @@ class StreamEvent:
     completion_tokens: Optional[int] = None
     elapsed: float = 0.0
     stopped: bool = False
+    finish_reason: str = ""
 
 
 def _merge_tool_call(acc: dict[int, dict[str, Any]], fragment: dict[str, Any]) -> None:
@@ -96,6 +98,8 @@ def stream_chat_completion(
     """
     url = _base(endpoint) + "/chat/completions"
     payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+    # ask for a final usage chunk so the context meter stays exact while streaming
+    payload["stream_options"] = {"include_usage": True}
     if temperature is not None:
         payload["temperature"] = temperature
     if max_tokens is not None:
@@ -115,6 +119,11 @@ def stream_chat_completion(
             raise ClientError(f"Could not reach {url}: {exc}") from exc
 
     resp = post(payload)
+    if resp.status_code == 400 and "stream_options" in payload:
+        # some servers reject unknown params; retry once without the usage request
+        resp.close()
+        payload.pop("stream_options")
+        resp = post(payload)
     if not resp.ok:
         body = (resp.text or "")[:300].strip()
         resp.close()
@@ -133,6 +142,7 @@ def stream_chat_completion(
             message=msg,
             prompt_tokens=usage.get("prompt_tokens"),
             completion_tokens=usage.get("completion_tokens"),
+            finish_reason=str((data.get("choices") or [{}])[0].get("finish_reason") or ""),
         )
         return
 
@@ -141,6 +151,7 @@ def stream_chat_completion(
     reasoning_parts: list[str] = []
     tool_acc: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
+    finish = ""
     stopped = False
     finished = threading.Event()
     if stop_event is not None:
@@ -164,6 +175,8 @@ def stream_chat_completion(
             if isinstance(chunk.get("usage"), dict):
                 usage = chunk["usage"]
             for choice in chunk.get("choices") or []:
+                if isinstance(choice.get("finish_reason"), str):
+                    finish = choice["finish_reason"]
                 delta = choice.get("delta") or {}
                 if isinstance(delta.get("content"), str):
                     content_parts.append(delta["content"])
@@ -202,6 +215,7 @@ def stream_chat_completion(
         completion_tokens=usage.get("completion_tokens"),
         elapsed=time.monotonic() - start,
         stopped=stopped,
+        finish_reason=finish,
     )
 
 
@@ -294,10 +308,12 @@ def chat_completion(
     elapsed = time.monotonic() - start
 
     data = _check_response(resp)
+    finish_reason = ""
     try:
         choices = data.get("choices") or []
         if not choices:
             raise ClientError("Endpoint returned no choices.")
+        finish_reason = str(choices[0].get("finish_reason") or "")
         message = choices[0]["message"]
         if not isinstance(message, dict):
             raise ClientError("Endpoint returned a non-object message.")
@@ -316,4 +332,5 @@ def chat_completion(
         reasoning=reasoning if isinstance(reasoning, str) else "",
         tool_calls=tool_calls if isinstance(tool_calls, list) else [],
         message=message,
+        finish_reason=finish_reason,
     )

@@ -181,21 +181,51 @@ is called for changed keys only. Don't simplify this back to writing
   - The streamed line enters `ui_lines` only at round end, with the final
     stripped text, so the log never holds half a reply.
   - `/compact`'s summary call stays non-streaming.
+- **Campaigns are a config layer, not a separate app**: `campaign.json` holds
+  scenario data (system_prompt, labels, knowledge, temperature, reasoning,
+  greeting, player, name) and sits between the config file and the environment,
+  so one scenario folder runs against any endpoint. Not to undo:
+  - `Config.campaign_keys` feeds `overridden`, so campaign prose can never be
+    written into `config.json` by `/config`/`/knowledge` (same mechanism as the
+    API-key rule). `/campaign FILE` persists only the path.
+  - Discovery order: `--campaign` / `SEKKA_CAMPAIGN` / config `campaign` key
+    (relative to the config file) / `campaign.json` beside the config /
+    `./.sekka/campaign.json`.
+  - `Config.resolve_path()` tries the campaign-or-config folder first, then cwd,
+    so shipped example folders work from anywhere. Keep the cwd fallback: older
+    configs were written assuming "cd into the folder".
+  - Sessions are `sekka_session: 2` and carry a validated `meta` block
+    (campaign path, labels). `load_history()` still returns messages only;
+    use `load_session()` when you want meta. Meta is untrusted input: strict
+    types/limits, and markdown saves deliberately carry none.
+  - `greeting` becomes a real assistant turn in context (so the first user line
+    answers it); `/regen` refuses when no user turn exists, which is exactly the
+    greeting-only case that once crashed with `pop from empty list`.
+- **Empty replies are errors, not blank turns.** `finish_reason` is captured on
+  both paths; an empty answer with no tool call rolls back to "message kept,
+  nothing stored" and says why (usually `reasoning` eating `max_tokens`). Don't
+  store blank assistant messages: they poison rolling/compact and saves.
+- **Streaming sends `stream_options: {include_usage: true}`** so the context
+  meter shows real usage mid-stream, and retries once without it on HTTP 400 for
+  servers that reject unknown params. Meter falls back to the estimate there.
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.
 
 ## Testing limitations / unverified
 
-- The bug fixes above were exercised against a **local stub OpenAI-compatible
-  server** driven through the real Textual TUI (Pilot), not a live vLLM/llama.cpp
-  endpoint. Re-verify against a real endpoint before trusting:
-  tool-calling round trips (knowledge tools) and `reasoning_effort` handling on
-  models that actually think.
-- `rolling`/`compact` were checked with the unit/TPI harness (fake
-  `chat_completion`), not with a model whose template rejects mid-chat system
-  messages. The fix (single leading system message) is by construction, not
-  observed on a real template.
+- **Verified against a real endpoint** (vLLM + a thinking, tool-calling model,
+  262k window) through the real TUI: streaming delivered ~150 distinct updates
+  with first token ~3 s; reasoning arrived as `delta.reasoning` (not
+  `reasoning_content`) and is handled; a knowledge tool call round trip fired and
+  the file was then reused from the lore cache; `ctrl+x` aborted a live stream
+  keeping the partial; usage from `stream_options` reached the meter exactly
+  (941 tokens, not the estimate); a reasoning-truncated empty reply hit the new
+  guard. Never tested against: llama.cpp, Ollama, LM Studio, hosted APIs, or a
+  server that ignores `stream=true`.
+- `rolling`/`compact` were checked with the harness (fake `chat_completion`) and
+  `rolling` on a live model; a template that rejects mid-chat system messages was
+  never observed rejecting the new single-system-message shape.
 - Markdown/markup fix is verified for rendering; **no markdown styling** is
   applied (replies are intentionally plain text).
 - **SSE tests need a chunked HTTP/1.1 fake server** (`SSEServer`,
@@ -204,9 +234,7 @@ is called for changed keys only. Don't simplify this back to writing
   `Content-Length` makes urllib3 read the entire response before yielding one
   line (which made `iter_lines()` look broken when it was not). Real endpoints
   (vLLM, llama.cpp, Ollama) send `Transfer-Encoding: chunked`.
-- Streaming was verified against that fake SSE server and the real TUI, not
-  against vLLM/llama.cpp/Ollama. Check `prompt_tokens` usage and
-  `reasoning_content` deltas on a real thinking model.
+
 
 ## Ops quick facts
 

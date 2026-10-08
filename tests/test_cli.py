@@ -7,9 +7,10 @@ def captured_main(monkeypatch, argv):
     """Run cli.main with load_config/SekkaApp stubbed; return overrides + path."""
     box = {}
 
-    def fake_load(overrides, config_path=None):
+    def fake_load(overrides, config_path=None, campaign_path=None):
         box["overrides"] = overrides
         box["config_path"] = config_path
+        box["campaign_path"] = campaign_path
         return object()
 
     class FakeApp:
@@ -115,12 +116,20 @@ def test_all_scalar_config_keys_have_a_flag(monkeypatch):
         "1024", "--context-mode", "pause", "--save-dir", ".", "--save-format",
         "json", "--autosave",
     ])
-    structured = {"labels", "theme", "keys", "knowledge"}
+    # long prose/campaign-shaped keys live in files and /config, not flags;
+    # 'campaign' is a loader argument (it selects a file), not a value override
+    structured = {"labels", "theme", "keys", "knowledge", "greeting", "player", "campaign"}
     scalars = set(DEFAULT_CONFIG) - structured
     # the overrides dict must cover every scalar config key exactly
     assert set(box["overrides"]) == scalars
+    assert box["campaign_path"] is None
 
 
 def test_no_stream_flag_reaches_config(monkeypatch):
     box = captured_main(monkeypatch, ["--no-stream"])
     assert box["overrides"]["stream"] is False
+
+
+def test_campaign_flag_is_passed_to_the_loader(monkeypatch):
+    box = captured_main(monkeypatch, ["--campaign", "camp.json"])
+    assert box["campaign_path"] == "camp.json"

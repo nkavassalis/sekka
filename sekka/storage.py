@@ -14,6 +14,8 @@ MAX_FILE_BYTES = 8_000_000
 MAX_MESSAGES = 10_000
 MAX_CONTENT_CHARS = 200_000
 RESUMABLE_ROLES = {"user", "assistant", "system"}
+SESSION_VERSION = 2
+MAX_META_STR = 4096
 
 
 class StorageError(Exception):
@@ -59,6 +61,7 @@ def save_history(
     fmt: str = "json",
     now: Optional[datetime] = None,
     overwrite: Optional[Path] = None,
+    meta: Optional[dict] = None,
 ) -> Path:
     """Write ``messages`` to a timestamped file. Returns the path written.
 
@@ -74,14 +77,44 @@ def save_history(
         path.write_text(render_markdown(messages, saved_at))
     else:
         payload = {
+            "sekka_session": SESSION_VERSION,
             "saved_at": saved_at.isoformat(timespec="seconds"),
             "messages": [
                 {"role": m.get("role"), "content": m.get("content")}
                 for m in messages
             ],
         }
+        if meta:
+            payload["meta"] = dict(meta)
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     return path
+
+
+def _clean_meta(raw: Any) -> dict:
+    """Validate the optional session metadata block (untrusted file content)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise StorageError("Session 'meta' must be an object.")
+    out: dict = {}
+    campaign = raw.get("campaign")
+    if isinstance(campaign, str) and campaign.strip() and len(campaign) <= MAX_META_STR:
+        out["campaign"] = campaign
+    labels = raw.get("labels")
+    if isinstance(labels, dict):
+        clean = {
+            k: v
+            for k, v in labels.items()
+            if k in ("user", "assistant") and isinstance(v, str) and 0 < len(v) <= 30
+        }
+        if clean:
+            out["labels"] = clean
+    return out
+
+
+def load_session(path: str | Path) -> tuple[list[dict], dict]:
+    """Return ``(messages, meta)`` from a saved session file."""
+    return _load_history(path, with_meta=True)
 
 
 def load_history(path: str | Path) -> list[dict]:
@@ -92,6 +125,14 @@ def load_history(path: str | Path) -> list[dict]:
     hand-edited or hostile file can never smuggle unexpected types, roles,
     or absurd sizes into the app. Raises StorageError with a readable
     message on anything unexpected.
+    """
+    return _load_history(path, with_meta=False)
+
+
+def _load_history(path: str | Path, with_meta: bool = False):
+    """Read and strictly validate a saved sekka JSON session.
+
+    Shared loader; see load_history / load_session.
     """
     p = Path(path).expanduser()
     if not p.is_file():
@@ -142,6 +183,8 @@ def load_history(path: str | Path) -> list[dict]:
             )
         # copy only the two known-good fields; drop anything else
         out.append({"role": role, "content": content})
+    if with_meta:
+        return out, _clean_meta(data.get("meta") if isinstance(data, dict) else None)
     return out
 
 

@@ -339,3 +339,54 @@ def test_stream_falls_back_when_endpoint_ignores_stream():
     assert len(events) == 1
     assert events[0].content == "plain fallback"
     assert events[0].completion_tokens == 2
+
+
+def test_stream_asks_for_usage_and_retries_if_the_endpoint_rejects_it():
+    """stream_options is optional: a 400 must fall back to a plain stream."""
+    from http.server import BaseHTTPRequestHandler as _BH, HTTPServer
+    seen = []
+
+    class H(_BH):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = _json.loads(self.rfile.read(length))
+            seen.append("stream_options" in body)
+            if "stream_options" in body:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"unknown parameter stream_options"}')
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            # no usage chunk: without stream_options the server has no reason to send one
+            self.wfile.write(
+                b"data: " + _json.dumps({"choices": [{"delta": {"content": "hi"}}]}).encode() + b"\n\n"
+            )
+            self.wfile.write(b"data: [DONE]\n\n")
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        ev = list(client.stream_chat_completion(
+            f"http://127.0.0.1:{srv.server_port}/v1", "m",
+            [{"role": "user", "content": "x"}]))[-1]
+    finally:
+        srv.shutdown()
+    assert seen == [True, False], seen          # asked, got rejected, retried plain
+    assert ev.content == "hi"
+    assert ev.completion_tokens is None          # no usage available without the option
+
+
+def test_stream_reports_finish_reason():
+    srv = SSEServer([delta("hi"), {"choices": [{"delta": {}, "finish_reason": "length"}]}])
+    try:
+        ev = list(client.stream_chat_completion(
+            srv.url, "m", [{"role": "user", "content": "x"}]))[-1]
+    finally:
+        srv.stop()
+    assert ev.finish_reason == "length"

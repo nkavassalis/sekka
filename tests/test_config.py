@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -215,3 +216,118 @@ def test_released_override_is_persisted(clean_env, monkeypatch):
     cfg.release_override("api_key")
     save_config(cfg)
     assert json.loads(path.read_text())["api_key"] == "typed-by-user"
+
+
+# ---------------------------------------------------------------- campaigns
+
+
+def make_campaign(path, **values):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(values))
+    return path
+
+
+def test_campaign_next_to_config_overrides_it(clean_env):
+    cfg_path = clean_env / ".sekka" / "config.json"
+    make_config_file(cfg_path, {"model": "m-file", "system_prompt": "from config"})
+    make_campaign(
+        clean_env / ".sekka" / "campaign.json",
+        system_prompt="You are the GM.",
+        labels={"user": "Player", "assistant": "GM"},
+        greeting="The tavern is smoky.",
+        temperature=0.9,
+    )
+    cfg = load_config(config_path=str(cfg_path))
+    assert cfg["system_prompt"] == "You are the GM."
+    assert cfg["labels"]["assistant"] == "GM"
+    assert cfg["labels"]["user"] == "Player"
+    assert cfg["greeting"] == "The tavern is smoky."
+    assert cfg["temperature"] == 0.9
+    assert cfg["model"] == "m-file"           # untouched by the campaign
+    assert cfg.campaign_path.name == "campaign.json"
+    assert cfg.campaign_keys == {
+        "system_prompt", "labels", "greeting", "temperature"
+    }
+
+
+def test_cli_and_env_still_beat_the_campaign(clean_env):
+    cfg_path = clean_env / ".sekka" / "config.json"
+    make_config_file(cfg_path, {})
+    make_campaign(cfg_path.parent / "campaign.json", system_prompt="campaign prompt")
+    monkey = os.environ.copy()
+    os.environ["SEKKA_ENDPOINT"] = "http://env:8000/v1"
+    try:
+        cfg = load_config(
+            {"system_prompt": "cli prompt"},
+            config_path=str(cfg_path),
+            campaign_path=str(cfg_path.parent / "campaign.json"),
+        )
+    finally:
+        os.environ.clear(); os.environ.update(monkey)
+    assert cfg["system_prompt"] == "cli prompt"
+    assert cfg["endpoint"] == "http://env:8000/v1"
+
+
+def test_campaign_values_are_not_written_into_the_config_file(clean_env):
+    cfg_path = clean_env / ".sekka" / "config.json"
+    make_config_file(cfg_path, {"system_prompt": "from config"})
+    camp = make_campaign(
+        cfg_path.parent / "campaign.json",
+        system_prompt="campaign prompt",
+        greeting="Roll for initiative.",
+        player="Seraine, frost-mage, 12 shillings",
+    )
+    cfg = load_config(config_path=str(cfg_path))
+    assert cfg["system_prompt"] == "campaign prompt"
+    save_config(cfg)
+    saved = json.loads(cfg_path.read_text())
+    # the config file keeps its own values / defaults; campaign prose never lands here
+    assert saved["system_prompt"] == "from config"
+    # keys the file never had are left out entirely rather than backfilled
+    assert saved.get("greeting", "") == "" and saved.get("player", "") == ""
+
+
+def test_campaign_named_in_config_is_relative_to_the_config(clean_env, monkeypatch):
+    cfg_path = clean_env / "elsewhere" / "config.json"
+    make_config_file(cfg_path, {"campaign": "prompts/rp.json"})
+    camp = make_campaign(cfg_path.parent / "prompts" / "rp.json", system_prompt="deep nested")
+    cfg = load_config(config_path=str(cfg_path))
+    assert cfg.campaign_path == camp
+    assert cfg["system_prompt"] == "deep nested"
+
+
+def test_explicit_missing_campaign_is_an_error(clean_env):
+    with pytest.raises(ConfigError, match="Campaign file not found"):
+        load_config(config_path=None, campaign_path=str(clean_env / "nope.json"))
+
+
+def test_campaign_validation(clean_env):
+    camp = clean_env / "c.json"
+    camp.parent.mkdir(parents=True, exist_ok=True)
+    for bad in (
+        '{"system_prompt": 5}',
+        '{"labels": {"user": ""}}',
+        '{"knowledge": [{"file": "x.md"}]}',
+        '{"reasoning": "ultra"}',
+        '{"temperature": "hot"}',
+    ):
+        camp.write_text(bad)
+        with pytest.raises(ConfigError):
+            load_config(campaign_path=str(camp))
+
+
+def test_resolve_path_prefers_base_dir_then_cwd(clean_env, monkeypatch):
+    base = clean_env / "camp"
+    make_config_file(base / "config.json", {})
+    (base / "knowledge").mkdir(parents=True)
+    (base / "knowledge" / "world.md").write_text("in campaign folder")
+    monkeypatch.chdir(clean_env)
+    (clean_env / "knowledge").mkdir()
+    (clean_env / "knowledge" / "world.md").write_text("in cwd")
+    cfg = load_config(config_path=str(base / "config.json"))
+    assert "in campaign folder" in cfg.resolve_path("knowledge/world.md").read_text()
+    # a path only present in the cwd still resolves (older "cd into the folder" habit)
+    (clean_env / "knowledge" / "other.md").write_text("only in cwd")
+    assert cfg.resolve_path("knowledge/other.md").read_text() == "only in cwd"
+    # absolute paths pass through
+    assert str(cfg.resolve_path("/etc/hostname")) == "/etc/hostname"

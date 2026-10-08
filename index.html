@@ -114,6 +114,11 @@ newer, and nothing heavier than Textual and Requests: the endpoint does the real
   <dd><code>/save</code> writes the chat to a file (JSON or Markdown), and
   <code>sekka -r</code> picks a saved session and carries on where it ended. Nothing is written
   unless you ask, or switch on autosave.</dd>
+  <dt>Campaigns: a whole scenario in a folder</dt>
+  <dd>A <code>campaign.json</code> beside your config holds the system prompt, role
+  names, lore files, the opening scene and your character. Copy the folder, run
+  Sekka in it, and you are playing; saved sessions remember their campaign and
+  resume as themselves.</dd>
   <dt>Knowledge files as tools</dt>
   <dd><code>/knowledge</code> turns documents you choose (character sheets, world notes, a
   procedure manual) into read-only tools the model can look things up in, instead of stuffing

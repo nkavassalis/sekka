@@ -41,6 +41,10 @@ bots, and role playing games.
   only; the model can never read files you didn't list)
 - Take-backs for collaborative storytelling: `/undo`, `/edit`, `/regen` and
   `/swipe` (multiple generated versions of a reply, cycled without losing them)
+- **Campaigns**: a `campaign.json` beside your config holds the system prompt,
+  role labels, lore files, an opening scene and your character, so a scenario is
+  one folder you `cd` into and play. Saved sessions remember their campaign and
+  resume as themselves
 - Optional thinking overlay (`/thinking`, `ctrl+t`) shows the model's
   reasoning and tool calls - hidden by default
 - Context meter in the corner of the editor (`45k/262k`) with configurable
@@ -69,6 +73,10 @@ sekka --endpoint http://your-llm-server:8000/v1 --model your-model-id
 
 Then just type and press **enter**. `/help` lists the in-chat commands.
 
+Pointing at a folder that contains a `campaign.json` (see
+[`examples/roleplaying/`](examples/)) makes that the scenario you are playing:
+`sekka --endpoint http://your-llm-server:8000/v1` inside it is enough.
+
 ## Usage
 
 ```
@@ -90,6 +98,7 @@ sekka [options]
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
 -r, --resume [FILE]    resume a saved session; no FILE = pick from save dir
+--campaign FILE        campaign to play as (system prompt, lore, greeting, PC)
 --config PATH          use a specific config file
 --version              show version
 ```
@@ -99,10 +108,12 @@ Every simple config key has a matching flag; the structured keys
 `/config`/`/knowledge` screens only.
 
 Environment variables (overridden by CLI flags):
-`SEKKA_ENDPOINT`, `SEKKA_MODEL`, `SEKKA_API_KEY`, `SEKKA_CONFIG`. A key given by
-flag or env var is used for the session but never written to your config file.
+`SEKKA_ENDPOINT`, `SEKKA_MODEL`, `SEKKA_API_KEY`, `SEKKA_CONFIG`,
+`SEKKA_CAMPAIGN`. A key given by flag or env var is used for the session but
+never written to your config file.
 
-Configuration precedence: **CLI flags > environment > config file > defaults**.
+Configuration precedence: **CLI flags > environment > campaign file > config
+file > defaults** - so one campaign can be pointed at any endpoint.
 
 ## Slash commands
 
@@ -113,6 +124,7 @@ Configuration precedence: **CLI flags > environment > config file > defaults**.
 | `/config`    | open the configuration screen (saved to the config file)    |
 | `/models`    | pick a model from the endpoint                              |
 | `/knowledge` | manage knowledge files offered to the model as tools        |
+| `/campaign`  | show the loaded campaign, or load one: `/campaign FILE`   |
 | `/thinking`  | show/hide model thinking & tool calls (also **ctrl+t**)     |
 | `/stop`      | stop the reply in flight (also **ctrl+x**)                  |
 | `/undo`      | delete the last exchange (your message and the reply)       |
@@ -148,6 +160,8 @@ calling (see [docs](docs/configuration.md) for the security notes).
 - Config: `./.sekka/config.json`, then `~/.sekka/config.json` (first one found
   wins; `/config` writes back to it). See
   [docs/configuration.md](docs/configuration.md).
+- Campaign: `campaign.json` beside the config (or `--campaign FILE`) - the
+  scenario itself: system prompt, labels, lore, opening scene, your character.
 - Saved chats: `sekka_YYYYMMDD_HHMMSS.json` (or `.md`) in `save_dir`.
 
 ## Development
