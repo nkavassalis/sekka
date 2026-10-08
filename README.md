@@ -150,7 +150,8 @@ file > defaults** - so one campaign can be pointed at any endpoint.
 | Command    | What it does                                                |
 |------------|-------------------------------------------------------------|
 | `/help`      | show commands and current key bindings                      |
-| `/save`      | save history to `sekka_YYYYMMDD_HHMMSS.json` (asks first)   |
+| `/save`      | save history on **this machine** (asks first)               |
+| `/export`    | transcript to **your** downloads (browser: a real download) |
 | `/config`    | configuration screen, saved to the config file              |
 | `/models`    | pick a model from the endpoint                              |
 | `/knowledge` | manage knowledge files offered to the model as tools        |
@@ -196,6 +197,13 @@ Before relying on it:
   whatever is on screen.
 - Config discovery follows the **server's** working directory, so run
   `sekka serve` from the folder whose campaign you want to play.
+- `/save` writes to the **server's** disk, so a served player uses `/export`
+  instead: the transcript is delivered as a genuine browser download
+  (`Content-Disposition: attachment`), and in a plain terminal it lands in your
+  downloads folder. Keep the tab open until the file arrives - closing it
+  cancels the delivery. The export holds only what is on screen: never the
+  system prompt, campaign path or pinned note, which is why it stays available
+  in read-only mode.
 
 ### Read-only mode (handing a tab to someone else)
 
@@ -205,7 +213,7 @@ sekka serve --serve-readonly        # every browser tab
 ```
 
 Play freely, change nothing. Chat, `/roll`, `/ooc`, `/note`, `/undo`, `/edit`,
-`/regen`, `/swipe`, `/thinking` and `/play` all work; `/config` prints a summary
+`/regen`, `/swipe`, `/thinking`, `/export` and `/play` all work; `/config` prints a summary
 instead of a form, and `/models`, `/knowledge`, `/campaign <file>`, `/save`, the
 resume picker and autosave are refused. Nothing is written to disk - no config,
 no campaign, no save files - and the API key is never displayed. `/note` still

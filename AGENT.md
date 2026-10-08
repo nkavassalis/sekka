@@ -174,6 +174,14 @@ is called for changed keys only. Don't simplify this back to writing
   keep their own transcript was considered and rejected in favour of "read-only writes
   nothing", which is easy to state, easy to test, and safe while the save directory is
   shared. Do not loosen it without asking.
+- **`/export` uses Textual's delivery API (`App.deliver_text`), not our own file writing**, so
+  one command does the right thing per driver: terminal -> downloads folder, textual-serve ->
+  browser download via `/download/{key}` on the same port. It exports `full_chat` only — never
+  the system prompt, campaign path or pinned note, and never `meta` — which is what makes it
+  safe to allow in read-only mode. `/save` still means "write on this machine".
+  **Two things to know**: delivery is streamed by the *app process*, so closing the tab cancels
+  it (textual-serve calls `cancel_app_downloads` on stop), and the failure surfaces as a
+  `DeliveryFailed` event — handled, so a failed export prints a line rather than vanishing.
 - **Browser mode wraps, it does not reimplement.** `sekka serve` hands textual-serve a
   *shell command string* (`"<sys.executable> -m sekka" + passthrough`, every token
   `shlex.quote`d because it is handed to a shell) and textual-serve spawns that on a
@@ -285,6 +293,16 @@ is called for changed keys only. Don't simplify this back to writing
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.
+
+## /export — how it was verified (2026-10-08)
+
+Served on 127.0.0.1:8491 and driven over the websocket: a real turn was played (reply visible in
+the frame stream), `/export` produced a `["deliver_file_start", key]` message on the ws text
+channel, and `GET /download/{key}` while the session was still open returned 200 with
+`Content-Type: application/json` + `Content-Disposition: attachment; filename=sekka_*.json`,
+231 bytes, valid `sekka_session: 2` JSON containing the model's actual reply and no `meta` block.
+Fetching *after* closing the websocket returned 200 with 0 bytes — the cancel-on-stop behaviour
+documented above, not a bug in sekka.
 
 ## Read-only mode — how it was verified (2026-10-08)
 

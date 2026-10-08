@@ -193,6 +193,21 @@ never volunteers them. Each has a CLI flag (`--top-p`, `--stop`, ...) and a fiel
 in `/config`. A campaign may carry them too, so a scenario can ask for a hotter
 sampler and get it.
 
+### `/save` vs `/export`
+
+`/save` writes into `save_dir` on the machine running sekka - which under
+`sekka serve` is the server, not the viewer. `/export` delivers the same document
+to the *player*: under textual-serve it is a real browser download through a
+single-use URL on the same port, and in a terminal it goes to your downloads
+folder (Textual's own delivery API, so one command covers both).
+
+- Format follows `save_format` (JSON is resumable with `sekka -r`; markdown is for reading).
+- Contents are exactly the visible turns. No system prompt, no campaign path, no
+  pinned note - so `/export` is allowed in read-only mode and `save_dir` never
+  has to be writable.
+- The file is streamed by the app process, so closing the tab before it lands
+  cancels the download; delivery failures are reported in the chat log.
+
 ### Read-only mode (`readonly`, `--readonly`, `serve --serve-readonly`)
 
 For sessions you did not configure yourself - a served tab given to another
