@@ -208,6 +208,19 @@ is called for changed keys only. Don't simplify this back to writing
 - **Streaming sends `stream_options: {include_usage: true}`** so the context
   meter shows real usage mid-stream, and retries once without it on HTTP 400 for
   servers that reject unknown params. Meter falls back to the estimate there.
+- **Pinned note (`note`, `/note`) is appended LAST in the system prompt**
+  (recency wins for instruction-following) and is the one thing `compact` cannot
+  summarise away. Details that matter:
+  - Persisting goes to the **campaign file** when one is loaded
+    (`save_campaign_values`, read-modify-write so other keys survive), else to
+    the config file. `_apply_config` does the same for any campaign-owned value
+    edited in /config - writing those to config.json would be silently ignored
+    next start, since the campaign layer wins.
+  - Trap: check campaign ownership **before** `release_override()`, which
+    discards the key from `campaign_keys` (this bit me once in that loop).
+  - `/save` stores the note in session meta (capped `MAX_META_NOTE`) and resume
+    applies meta over the campaign value: the saved state is the truth of that
+    session.
 - **Lorebook triggers (`keywords`, `always` on knowledge entries)**: keyword
   matches in the *player's* message load the file into `self.lore`, which
   `_system_text()` folds into the single system prompt (labelled with the file

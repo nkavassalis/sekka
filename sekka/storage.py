@@ -16,6 +16,7 @@ MAX_CONTENT_CHARS = 200_000
 RESUMABLE_ROLES = {"user", "assistant", "system"}
 SESSION_VERSION = 2
 MAX_META_STR = 4096
+MAX_META_NOTE = 8_000
 
 
 class StorageError(Exception):
@@ -100,6 +101,9 @@ def _clean_meta(raw: Any) -> dict:
     campaign = raw.get("campaign")
     if isinstance(campaign, str) and campaign.strip() and len(campaign) <= MAX_META_STR:
         out["campaign"] = campaign
+    note = raw.get("note")
+    if isinstance(note, str) and note.strip() and len(note) <= MAX_META_NOTE:
+        out["note"] = note
     labels = raw.get("labels")
     if isinstance(labels, dict):
         clean = {
