@@ -253,6 +253,16 @@ the config or `--serve-host` / `--serve-port`.
 - **Flags after `--` are forwarded** to each spawned session:
   `sekka serve -- --endpoint http://box:8000/v1`. Tokens are shell-quoted before
   the server sees them, so odd characters stay data.
+- **The page talks to the origin you opened it on.** sekka ships its own
+  `templates/app_index.html` (textual-serve's, MIT) with the websocket URL computed
+  in the browser instead of baked from the bind address, statics referenced
+  relative to the page, and the `fonts.googleapis.com` link dropped — upstream
+  bakes `ws://<bind_host>:<bind_port>/ws` into the page, which is a dead socket for
+  anyone arriving via a LAN address, a port-forward, a tunnel on another port or a
+  prefixed proxy, and the result is a page that shows nothing but the intro logo
+  forever. Keep those three edits when re-basing the template on a new
+  textual-serve version. `--serve-public-url` opts back in to absolute URLs (and to
+  the stock template) for a proxy that rewrites host and scheme.
 - Config discovery uses the server process's working directory: `cd` into the
   campaign folder first.
 - Browser-reserved chords (`ctrl+t`) may not reach the app; the slash-command

@@ -182,6 +182,22 @@ is called for changed keys only. Don't simplify this back to writing
   **Two things to know**: delivery is streamed by the *app process*, so closing the tab cancels
   it (textual-serve calls `cancel_app_downloads` on stop), and the failure surfaces as a
   `DeliveryFailed` event — handled, so a failed export prints a line rather than vanishing.
+- **The served page is sekka's file, not textual-serve's** (`sekka/templates/app_index.html`,
+  passed as `templates_path`). Upstream bakes the websocket URL from the *bind*
+  address (`Server.public_url` is fixed at construction and `handle_index` ignores
+  the request), so `--serve-host 0.0.0.0` shipped `ws://0.0.0.0:8484/ws` and anyone
+  arriving over a LAN address, a port-forward, a tunnel on another port or a
+  prefixed proxy got a socket to the wrong place: the page sat on the intro overlay
+  (Textual "T" + app name) forever, which reads as "the web UI renders nothing".
+  Our template computes the socket URL same-origin from `location`, uses relative
+  static paths, and drops the render-blocking `fonts.googleapis.com` link (offline
+  or privacy-blocked networks then hang a local tool on a third-party CDN). All
+  three are deliberate: re-apply them if you re-base the template on a new
+  textual-serve. `--serve-public-url` is the escape hatch - it sets `public_url`
+  and falls back to the *stock* template, since an absolute URL is the one thing the
+  browser cannot infer. Covered by `tests/test_serve_browser.py`, which loads the
+  page through a local port-forwarder so the bind address really differs from the
+  URL typed.
 - **Browser mode wraps, it does not reimplement.** `sekka serve` hands textual-serve a
   *shell command string* (`"<sys.executable> -m sekka" + passthrough`, every token
   `shlex.quote`d because it is handed to a shell) and textual-serve spawns that on a
@@ -327,9 +343,35 @@ protocol the browser itself uses (`["stdin", "..."]` out, binary ANSI frames in)
 against the real endpoint: index page 200; session subprocess spawned; boot line and
 `/play` cheat sheet present in the frame stream; keystrokes reached the app; `/save`
 from the browser session wrote a session file whose assistant turn held the model's
-reply (`\n\nwebok`). Chosen over a real browser because no Chromium is available here.
-Not verified: xterm.js rendering details, resize, copy/paste, browser-chord
-collisions, non-loopback binds, TLS/reverse proxies, Windows.
+reply (`\n\nwebok`). Chosen over a real browser because no Chromium was installed
+here at the time. That gap is now closed by `tests/test_serve_browser.py`
+(Chromium driving a real `sekka serve`, including through a port-forwarder).
+
+## Blank served page — the bind-address bug (2026-10-08)
+
+Reported symptom: the page showed only Textual's "T" and the word sekka, nothing
+else. Diagnosis, in order, all observed rather than assumed:
+
+1. Headless Chromium on the box rendered fine (`-first-byte` inside ~1 s, canvas
+   pixels lit, boot text present) → server, subprocess and frame stream were healthy.
+2. Serving the same page with a dead websocket URL reproduced the symptom exactly:
+   `{'cls': '-closed', 'introVisible': True, 'introText': 'sekka', 'termOp': '0'}`.
+   So "blank page" always means "the socket delivered nothing", never "the app broke".
+3. `Server.public_url` (hence `app_websocket_url`) is built from the **bind** address
+   and `handle_index` never consults the request: a request with `Host:
+   sekka.example.net:8443` still got `ws://127.0.0.1:8499/ws`, and
+   `--serve-host 0.0.0.0` got `ws://0.0.0.0:8503/ws`. The reporter had opened
+   `10.1.13.45:8484`, i.e. neither of those.
+
+Fix + evidence: sekka's own template (same-origin socket URL), unit cover in
+`tests/test_serve.py`, browser cover in `tests/test_serve_browser.py`. Verified by
+(a) loading the page through a forwarder on a port the server never bound - it now
+reports `ws://127.0.0.1:<forwarded>/ws` and renders, (b) `--serve-host 0.0.0.0
+--serve-allow-public` opened as `http://127.0.0.1:8721/` → renders, and (c)
+re-running the suite with the template wiring deliberately broken, which fails 3
+tests. Not verified: a real second machine, real TLS termination, and a prefixed
+reverse proxy (the relative static paths and same-origin socket are written for it,
+but nothing here actually ran one).
 
 ## Testing limitations / unverified
 
@@ -359,12 +401,18 @@ collisions, non-loopback binds, TLS/reverse proxies, Windows.
 
 - Dev endpoint URL/model and local overrides go in `.sekka/config.json`
   (auto-discovered, gitignored). See `LOCAL.md`.
-- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 237 tests, all
-  should pass in ~110 s - the SSE tests sleep deliberately). `conftest.py` keeps
+- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 249 tests, all
+  should pass in ~120 s - the SSE tests sleep deliberately). `conftest.py` keeps
   tests off the real config/network. The fresh venv needs `pip install -e '.[dev]'`
   **and** `pip install 'textual-serve>=1.1'`: without the serve extra,
   `test_public_bind_is_refused_without_explicit_opt_in` fails on the ImportError
-  branch, which is environmental, not a regression.
+  branch, which is environmental, not a regression. The served-page browser tests
+  additionally need `pip install 'playwright>=1.40'` + `python -m playwright install
+  chromium` and skip themselves when either is missing (`pip install -e '.[browser]'`).
+- Playwright browser tests boot a real `sekka serve` subprocess and drive Chromium
+  (`tests/test_serve_browser.py`). Keep the port-forwarder in that fixture: it is
+  what makes them regression cover for the bind-address bug instead of a
+  localhost-only smoke test.
 - Tests must not name real internal services: one captive-portal test used to
   embed a real dashboard name; use generic stand-ins.
 - A working tree once mysteriously lost files; recovery was via

@@ -16,9 +16,14 @@ from __future__ import annotations
 
 import shlex
 import sys
+from pathlib import Path
 from typing import Optional, Sequence
 
 from .config import Config, ConfigError
+
+# sekka's own copy of textual-serve's page (see the comment inside it): same-origin
+# websocket, relative statics, no CDN fonts. Pass public_url to opt out.
+TEMPLATES_PATH = Path(__file__).parent / "templates"
 
 INSTALL_HINT = (
     "The web server needs the optional 'serve' extra:\n"
@@ -69,6 +74,24 @@ def public_bind_warning(host: str) -> Optional[str]:
     )
 
 
+def resolve_public_url(public_url: Optional[str]) -> Optional[str]:
+    """Normalised absolute URL for the page, or None (CLI-only, like the other
+    ``--serve-*`` flags: where a server is reachable from is deployment detail,
+    not something to remember per campaign file).
+
+    Setting it means "the player reaches this server at exactly this address":
+    textual-serve then builds absolute page/static/websocket URLs from it and the
+    stock template is used, because a proxy that rewrites host and scheme knows
+    better than the browser does.
+    """
+    if public_url is None:
+        return None
+    url = public_url.strip().rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise ConfigError("--serve-public-url must start with http:// or https://.")
+    return url
+
+
 def run_server(
     config: Config,
     *,
@@ -77,6 +100,7 @@ def run_server(
     title: Optional[str] = None,
     extra_args: Sequence[str] = (),
     allow_public: bool = False,
+    public_url: Optional[str] = None,
 ) -> int:
     """Start the web server (blocking). Returns a process exit code."""
     try:
@@ -86,6 +110,11 @@ def run_server(
         return 2
 
     bind_host, bind_port = resolve_bind(config, host, port)
+    try:
+        external = resolve_public_url(public_url)
+    except ConfigError as exc:
+        print(f"sekka: {exc}", file=sys.stderr)
+        return 2
     warning = public_bind_warning(bind_host)
     if warning:
         if not allow_public:
@@ -98,13 +127,20 @@ def run_server(
             return 2
         print(f"sekka: WARNING {warning}", file=sys.stderr)
 
+    kwargs = {}
+    if external:
+        kwargs["public_url"] = external
+    else:
+        kwargs["templates_path"] = TEMPLATES_PATH
+
     server = Server(
         serve_command(extra_args),
         host=bind_host,
         port=bind_port,
         title=title or "sekka",
+        **kwargs,
     )
-    print(f"sekka web UI: http://{bind_host}:{bind_port}  (ctrl+c to stop)")
+    print(f"sekka web UI: {external or f'http://{bind_host}:{bind_port}'}  (ctrl+c to stop)")
     print(f"each browser tab starts a fresh chat; config comes from {config.path or 'defaults'}")
     server.serve()
     return 0

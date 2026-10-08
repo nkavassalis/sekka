@@ -124,6 +124,7 @@ sekka [options]
 --remember             remember --endpoint/--model (--remember / --no-remember)
 --readonly             play without being able to change or write anything
 --serve-readonly       shorthand for `serve -- --readonly` (needs the `serve` mode)
+--serve-public-url URL absolute URL the page is reached at, for proxies
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
@@ -178,6 +179,8 @@ pip install 'sekka[serve]'          # or: pipx inject sekka textual-serve
 sekka serve                         # http://127.0.0.1:8484
 sekka serve --serve-port 9000
 sekka serve -- --endpoint http://box:8000/v1    # flags after -- reach each session
+sekka serve --serve-host 0.0.0.0 --serve-allow-public   # reachable on the LAN
+sekka serve --serve-public-url https://play.example.net/sekka   # behind a proxy
 ```
 
 It is not a second front end. Each browser tab runs a real `sekka` process on a
@@ -188,6 +191,13 @@ The `--serve-*` flags belong to the mode, so they need `serve` on the command
 line. `sekka --serve-port 9100` is refused with an explanation instead of
 silently opening the terminal UI and ignoring the flag (nothing is loaded or
 written when it refuses).
+
+**Whichever address you open the page on, the terminal follows.** The page opens
+its terminal socket back to its own origin rather than to whatever address the
+server bound, so a LAN address, a port-forward, an SSH tunnel on a different
+local port, and an HTTPS reverse proxy all render. `--serve-public-url` is there
+for the case where the address really is different from the one in the browser's
+location bar, and is the only reason to use it.
 
 Before relying on it:
 

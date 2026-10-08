@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<!--
+  sekka's copy of textual-serve's app_index.html (MIT, William Judd / Textualize).
+  Three deliberate differences, all of them bug fixes for the way sekka is actually
+  run - keep them when updating against a new textual-serve version:
+
+  1. The websocket URL is computed SAME-ORIGIN in the browser instead of trusting
+     `app_websocket_url`. textual-serve builds that value from the *bind* address
+     (Server.public_url), so `--serve-host 0.0.0.0` put `ws://0.0.0.0:8484/ws` in
+     the page and any other machine, tunnel port or reverse proxy got a socket to
+     somewhere else: the intro dialog stayed up forever and nothing was rendered.
+     Same-origin works for localhost, LAN IPs, port-forwards, SSH tunnels and
+     prefixed reverse proxies alike, and it picks wss: automatically on https.
+  2. Static assets are referenced relative to the page, for the same reason (and
+     so a path-prefix proxy keeps working).
+  3. No fonts.googleapis.com link. It was render-blocking on offline, firewalled
+     or privacy-blocked networks - a third-party CDN standing between a local tool
+     and its own terminal. The monospace stack below is the one the CSS already
+     falls back to.
+-->
+<html>
+  <head>
+    <link rel="stylesheet" href="static/css/xterm.css" />
+
+    <script src="static/js/textual.js"></script>
+    <style>
+      body {
+        background: #0c181f;
+      }
+
+      .dialog-container {
+        position: absolute;
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        box-shadow: var(--shadow-elevation-high);
+      }
+      .shade {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        background: #0c181f;
+        background-image: url("static/images/background.png");
+      }
+      .intro {
+        width: 640px;
+        height: 240px;
+        font-size: 16px;
+        z-index: 20;
+        font-family: "Roboto Mono", menlo, monospace;
+        text-align: center;
+        opacity: 1;
+        color: rgba(255, 255, 255, 0.95);
+        background-color: #12232d;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 32px;
+      }
+
+      body.-first-byte .intro-dialog,
+      body.-first-byte .intro-dialog .shade {
+        opacity: 0;
+        transition: opacity 0.3s ease-out;
+        display: none;
+      }
+
+      body .textual-terminal {
+        opacity: 0;
+        transition: opacity 0.3s ease-out;
+      }
+
+      body.-first-byte .textual-terminal {
+        opacity: 1;
+        transition: opacity 0.3s ease-out;
+      }
+
+      .intro svg {
+        padding-right: 16px;
+      }
+
+      body Button {
+        padding: 16px 32px;
+        background-color: #5e0ba7;
+        color: rgba(255, 255, 255, 0.95);
+        border: none;
+        font-family: "Roboto Mono", menlo, monospace;
+        margin: 16px;
+        display: block;
+      }
+
+      Button:hover {
+        background: #ac5af4;
+        cursor: pointer;
+      }
+
+      .closed-dialog {
+        opacity: 0;
+        display: none;
+      }
+
+      body.-closed .closed-dialog {
+        opacity: 1;
+        display: flex;
+      }
+
+      #start {
+        display: none;
+      }
+
+      #start.-delay {
+        display: flex;
+      }
+    </style>
+    <script>
+      function getStartUrl() {
+        const url = new URL(window.location.href);
+        const params = new URLSearchParams(url.search);
+        params.delete("delay");
+        return url.pathname + "?" + params.toString();
+      }
+      async function refresh() {
+        const ping_url = document.body.dataset.pingurl;
+        if (ping_url) {
+          await fetch(ping_url, {
+            method: "GET",
+            mode: "no-cors",
+          });
+        }
+        window.location.href = getStartUrl();
+      }
+    </script>
+  </head>
+  <body data-pingurl="">
+    <div class="dialog-container intro-dialog">
+      <div class="shade"></div>
+      <div class="intro">
+        <svg
+          width="32px"
+          viewBox="0 0 2933 2261"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            fill-rule="evenodd"
+            clip-rule="evenodd"
+            d="M2927.81 0H1677.1L1312.35 205.173H306.689L0.359375 434.921L204.029 893.177H735.972L644.784 2261H1060.36L1441.72 1974.97L2073.92 688.003H2334.4L2717.9 472.286L2927.81 0ZM1245.82 410.347L1276.32 277.656H330.85L153.929 410.347H1245.82ZM1229.16 482.83H100.972L251.134 820.694H813.449L722.26 2188.52H837.043L1229.16 482.83ZM1350.7 277.656L911.417 2188.52H1023.87L1662.19 615.52H2301.36L2451.52 277.656H1350.7ZM1460.19 205.173H2497.79L2733.69 72.4829H1696.09L1460.19 205.173Z"
+            fill="#ffffff"
+          />
+        </svg>
+
+        <div>{{ application.name or 'sekka' }}</div>
+        <button type="button" onClick="refresh()" id="start">Start</button>
+      </div>
+    </div>
+
+    <div class="dialog-container closed-dialog">
+      <div class="shade"></div>
+      <div class="intro">
+        <div class="message">Session ended.</div>
+        <button type="button" onClick="refresh()">Restart</button>
+      </div>
+    </div>
+
+    <div
+      id="terminal"
+      class="textual-terminal"
+      data-session-websocket-url="{{ app_websocket_url }}"
+      data-font-size="{{ font_size }}"
+    ></div>
+
+    <script>
+      /* Rewrite the socket URL to this very origin. textual-serve derived the
+         value above from the address the server bound, not from the URL the
+         player used: bound 0.0.0.0 it says ws://0.0.0.0:PORT, bound 127.0.0.1 it
+         says ws://127.0.0.1:PORT - which is a different machine's loopback as
+         soon as anyone connects over a tunnel, a LAN address or a proxy.
+         Runs inline, before textual.js's window/load handler reads the attribute. */
+      (function () {
+        var terminal = document.getElementById("terminal");
+        var supplied = terminal.dataset.sessionWebsocketUrl || "";
+        var name = "ws";
+        try {
+          var path = new URL(supplied, location.href).pathname || "";
+          name = path.split("/").filter(Boolean).pop() || "ws";
+        } catch (err) {
+          /* keep the default route name */
+        }
+        terminal.dataset.sessionWebsocketUrl =
+          (location.protocol === "https:" ? "wss" : "ws") +
+          "://" +
+          location.host +
+          new URL(name, location.href).pathname;
+      })();
+    </script>
+  </body>
+</html>
