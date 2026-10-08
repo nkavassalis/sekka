@@ -1,5 +1,8 @@
 # AGENT.md — maintainer notes for sekka
 
+**Project mode: REAL** (public GitHub repo under `nkavassalis`, full test suite
+must pass before any push, README + AGENT.md kept current).
+
 Hard-won context for anyone (human or agent) working on this repo. Ordered by
 "you will hit this soonest."
 
@@ -76,8 +79,8 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
   builds `(10.0, read or None)`; `0`/`None` means wait forever. Default 300 s.
 - vLLM reports context size as **top-level `max_model_len`** in `/models`
   (`ModelInfo` dataclass captures it); `context_window` config overrides.
-- Endpoints that return **HTML instead of JSON** (captive portals, e.g.
-  sparkDash on :8000) now raise a clear ClientError via content-type check.
+- Endpoints that return **HTML instead of JSON** (captive portals, a web UI on
+  the API port) now raise a clear ClientError via content-type check.
 - Context meter math: `used = max(exact API usage, char/4 estimate incl.
   system prompt)`; the send guard reserves ~10% of the window for the reply.
 - Pause mode must not mutate `chat` (it rolls back the user turn on errors —
@@ -122,28 +125,46 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
   `-r` with no value = picker listing `save_dir` JSON newest-first.
 - Saves: timestamped files, confirm-before-write, no autosave by default.
 
-## Deployment (sekka.org)
+## Deployment (sekka.org) — internals live in LOCAL.md
 
-- GitHub Pages (repo `nkavassalis/sekka`, `main` branch, `/` root) behind
-  CloudFront `E3N86H03FRP00P`; Route 53 zone `Z08634643RT85W4CD51EI` has
-  apex+www A/AAAA aliases to the distribution.
-- **CloudFront Function `sekka-host-override`** (viewer-request): rewrites
-  origin Host to `sekka.org` (GitHub rejects the raw cloudfront-fetched
-  hostname) and 301s www → apex. Don't remove it; GitHub Pages "custom
-  domain" also lives in the CNAME file.
-- ACM cert is in **us-east-1** (CloudFront requirement), DNS-validated.
-- Default cache TTL 600 s — after pushing to `index.html`, run
-  `aws cloudfront create-invalidation --distribution-id E3N86H03FRP00P --paths "/*"`.
-- AWS profiles: default user `websites` (no IAM/Route53 list perms);
-  Route53 write creds in `~/.aws/route53.ini` (`--profile`).
+Deploy/DNS/CDN specifics (distribution ID, hosted zone ID, AWS profiles, cert
+region, invalidation command) and the dev endpoint hostname were **moved out of
+this public file into `LOCAL.md`, which is gitignored**. Never move them back,
+and never add hostnames, private IPs, account or resource IDs here: this repo
+is public, and tracked content is public forever. Describe infra abstractly
+("the dev vLLM box", "the CDN") and put real values in `LOCAL.md` or env vars.
+The CNAME/`.nojekyll` rules above still apply.
+
+## Config-persistence rule (new)
+
+`Config.persistable()` is what gets written to disk: keys overridden by CLI
+flags or env vars keep their file value (or are omitted if the file had none),
+so `SEKKA_API_KEY`/`--api-key` can never be silently persisted by /config or a
+/knowledge toggle. When the user edits such a key in /config, `release_override`
+is called for changed keys only. Don't simplify this back to writing
+`config.values`.
+
+## Testing limitations / unverified
+
+- The bug fixes above were exercised against a **local stub OpenAI-compatible
+  server** driven through the real Textual TUI (Pilot), not a live vLLM/llama.cpp
+  endpoint. Re-verify against a real endpoint before trusting:
+  tool-calling round trips (knowledge tools) and `reasoning_effort` handling on
+  models that actually think.
+- `rolling`/`compact` were checked with the unit/TPI harness (fake
+  `chat_completion`), not with a model whose template rejects mid-chat system
+  messages. The fix (single leading system message) is by construction, not
+  observed on a real template.
+- Markdown/markup fix is verified for rendering; **no markdown styling** is
+  applied (replies are intentionally plain text).
 
 ## Ops quick facts
 
-- Dev/test endpoint: `http://10.1.13.99:8000/v1` (vLLM, model
-  `qwen3.8-flash-next`, `max_model_len=262144`). Local dev config lives in
-  `.sekka/config.json` in the repo dir (auto-discovered, gitignored).
-- Tests: `python3 -m pytest tests/ -q` (Textual Pilot; ~75 tests, all should
-  pass in ~15 s). `conftest.py` keeps tests off the real config/network.
+- Dev endpoint URL/model and local overrides go in `.sekka/config.json`
+  (auto-discovered, gitignored). See `LOCAL.md`.
+- Tests: `python3 -m pytest tests/ -q` (Textual Pilot; ~115 tests, all should
+  pass in ~25 s). `conftest.py` keeps tests off the real config/network.
+- Tests must not name real internal services: one captive-portal test used to
+  embed a real dashboard name; use generic stand-ins.
 - A working tree once mysteriously lost files; recovery was via
-  `git commit-tree` against known-good trees. Re-do `sekka-backup` after
-  big verified milestones.
+  `git commit-tree` against known-good trees. Backup routine: see `LOCAL.md`.

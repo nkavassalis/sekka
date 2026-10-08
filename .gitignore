@@ -8,7 +8,9 @@ dist/
 sekka_*.json
 sekka_*.md
 .sekka/
+LOCAL.md
 
 # example configs are meant to be committed
 !examples/*/.sekka/
+LOCAL.md
 !examples/*/.sekka/config.json

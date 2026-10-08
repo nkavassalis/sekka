@@ -99,7 +99,7 @@ class ModelScreen(ModalScreen[Optional[str]]):
         with Vertical():
             yield Static("Select a model (enter to choose, esc to cancel):", classes="msg-system")
             yield ListView(
-                *[ListItem(Label(name, id=f"model-item-{i}")) for i, name in enumerate(self.models)],
+                *[ListItem(Label(name, id=f"model-item-{i}", markup=False)) for i, name in enumerate(self.models)],
                 id="model_list",
             )
 
@@ -130,7 +130,7 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(self.question)
+            yield Static(self.question, markup=False)
             with Vertical(id="confirm_buttons"):
                 yield Button("Yes", id="yes", variant="primary")
                 yield Button("No", id="no", variant="default")
@@ -346,7 +346,7 @@ class ResumeScreen(ModalScreen[Optional[str]]):
             )
             yield ListView(
                 *[
-                    ListItem(Label(f"{p.name}  ({p.stat().st_size // 1024} KB)", id=f"session-item-{i}"))
+                    ListItem(Label(f"{p.name}  ({p.stat().st_size // 1024} KB)", id=f"session-item-{i}", markup=False))
                     for i, p in enumerate(self.paths)
                 ],
                 id="session_list",
@@ -457,8 +457,8 @@ class KnowledgeScreen(ModalScreen[None]):
         for i, entry in enumerate(self._entries()):
             scroll.mount(
                 Horizontal(
-                    Checkbox(entry["file"], value=bool(entry["enabled"]), id=f"k_en_{i}"),
-                    Static(entry["description"][:60], classes="k_desc"),
+                    Checkbox(entry["file"].replace("[", "\\["), value=bool(entry["enabled"]), id=f"k_en_{i}"),
+                    Static(entry["description"][:60], classes="k_desc", markup=False),
                     Button("x", id=f"k_rm_{i}", variant="error"),
                     classes="k_entry",
                 )
@@ -566,6 +566,9 @@ class SekkaApp(App):
         self.chat: list[dict[str, str]] = []  # context sent to the model (no system)
         self.full_chat: list[dict[str, str]] = []  # everything said, for /save
         self.notice_text = ""
+        self.summary = ""  # compacted/restored earlier context, folded into the system prompt
+        self.lore: dict[str, str] = {}  # knowledge already read this session {path: text}
+        self.autosave_path: Optional[Path] = None
         self.busy = False
         self.show_thinking = False  # ctrl+t / /thinking; always off at startup
         self._quit_arm = 0.0
@@ -662,8 +665,23 @@ class SekkaApp(App):
         reserve = max(256, total // 10)
         return total - reserve
 
+    def _system_text(self) -> str:
+        """One system message: prompt + summary of earlier turns + loaded lore.
+
+        Everything that is not a user/assistant turn lives here because many
+        chat templates reject system messages anywhere but first.
+        """
+        parts = [(self.config["system_prompt"] or "").strip()]
+        if self.summary:
+            parts.append("[Summary of earlier conversation]\n" + self.summary)
+        if self.lore:
+            parts.append(
+                "[Reference material already loaded]\n" + "\n\n".join(self.lore.values())
+            )
+        return "\n\n".join(p for p in parts if p)
+
     def _used_estimate(self) -> int:
-        system = (self.config["system_prompt"] or "").strip()
+        system = self._system_text()
         est = estimate_tokens(system) if system else 0
         est += sum(estimate_tokens(m["content"]) for m in self.chat)
         return max(self.context_used, est)
@@ -690,7 +708,7 @@ class SekkaApp(App):
         return self.query_one("#history", VerticalScroll)
 
     def _append(self, text: str, role: str, log: bool = True) -> Static:
-        widget = Static(text, classes=f"msg-{role}")
+        widget = Static(text, classes=f"msg-{role}", markup=False)
         if role in self.HIDDEN_KINDS:
             widget.styles.display = "block" if self.show_thinking else "none"
         if log:
@@ -768,6 +786,10 @@ class SekkaApp(App):
             removed = self.chat.pop(0)
             need -= estimate_tokens(removed["content"])
             dropped += 1
+            # never leave the context starting with an assistant turn
+            while len(self.chat) > 2 and self.chat[0]["role"] != "user":
+                need -= estimate_tokens(self.chat.pop(0)["content"])
+                dropped += 1
         self.context_used = 0  # exact count of the old window is stale now
         self._update_ctx_label()
         return dropped
@@ -785,6 +807,8 @@ class SekkaApp(App):
                 break
             acc += cost
             tail_start -= 1
+        while tail_start < len(self.chat) - 1 and self.chat[tail_start]["role"] != "user":
+            tail_start += 1  # keep the kept tail starting on a user turn
         older, newer = self.chat[:tail_start], self.chat[tail_start:]
         if not older:  # nothing worth summarizing; just proceed
             self._stop_thinking()
@@ -792,6 +816,8 @@ class SekkaApp(App):
             self._send_chat(text)
             return
         transcript = "\n".join(f"{m['role']}: {m['content']}" for m in older)
+        if self.summary:
+            transcript = f"(earlier summary) {self.summary}\n" + transcript
         try:
             resp = await asyncio.to_thread(
                 client.chat_completion,
@@ -816,9 +842,8 @@ class SekkaApp(App):
             )
             self._send_chat(text)
             return
-        self.chat[:] = [
-            {"role": "system", "content": "[Summary of earlier conversation]\n" + resp.content.strip()}
-        ] + newer
+        self.summary = resp.content.strip()
+        self.chat[:] = newer
         self.context_used = 0
         self._stop_thinking()
         self.busy = False
@@ -915,7 +940,10 @@ class SekkaApp(App):
             if not entry.get("enabled"):
                 continue
             path = os.path.abspath(os.path.expanduser(entry["file"]))
-            stem = re.sub(r"\W+", "_", Path(entry["file"]).stem).strip("_") or "knowledge"
+            if path in self.lore:
+                continue  # already in the system context this session
+            # OpenAI tool names must match [a-zA-Z0-9_-]{1,64}
+            stem = re.sub(r"[^A-Za-z0-9]+", "_", Path(entry["file"]).stem).strip("_")[:50] or "knowledge"
             name = f"read_{stem}"
             if name in used:
                 name = f"{name}_{i}"
@@ -950,11 +978,12 @@ class SekkaApp(App):
     async def _chat_worker(self) -> None:
         cfg = self.config.values
         messages: list[dict[str, Any]] = []
-        system_prompt = (cfg.get("system_prompt") or "").strip()
+        system_prompt = self._system_text()
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.extend(self.chat)
         tools, tool_files = self._knowledge_tools()
+        loaded_now: dict[str, str] = {}
         rounds = 0
         total_completion = 0
         last_prompt: Optional[int] = None
@@ -994,6 +1023,7 @@ class SekkaApp(App):
                         self._append(f"tool call: {fn}", "tool")
                         if fn in tool_files:
                             result = self._read_knowledge_file(tool_files[fn])
+                            loaded_now[tool_files[fn]] = result
                         else:
                             # model hallucinated a tool: refuse, do not read anything
                             result = "Error: unknown tool."
@@ -1012,11 +1042,15 @@ class SekkaApp(App):
             self._sys(f"Error: {exc}", error=True)
             # roll back the unanswered user turn so history stays consistent
             self.chat.pop()
+            if self.full_chat and self.full_chat[-1]["role"] == "user":
+                self.full_chat.pop()
             self._update_ctx_label()
             return
 
         self._stop_thinking()
         self.busy = False
+        # keep lore the model read so later turns need not re-fetch it
+        self.lore.update(loaded_now)
         if last_prompt is not None:
             self.context_used = last_prompt + total_completion
         self._update_ctx_label()
@@ -1028,8 +1062,9 @@ class SekkaApp(App):
         self._append(f"{assistant_label}:\n{shown}", "assistant")
         self._append(format_stats(last_elapsed, total_completion), "stats")
         if self.config.get("autosave") and self.full_chat:
-            path = self._save_history()
-            self._append(f"(autosaved to {path})", "stats")
+            path = self._save_history(autosave=True)
+            if path:
+                self._append(f"(autosaved to {path})", "stats")
         self._history().scroll_end(animate=False)
 
     # --------------------------------------------------------------- commands
@@ -1063,6 +1098,10 @@ class SekkaApp(App):
                 child.remove()
             self.chat.clear()
             self.full_chat.clear()
+            self.summary = ""
+            self.lore.clear()
+            self.autosave_path = None
+            self.context_used = 0
             self.ui_lines.clear()
             self._set_notice("")
             self._sys("(history cleared)")
@@ -1091,16 +1130,19 @@ class SekkaApp(App):
 
         self.push_screen(ConfirmScreen(f"Save chat history as {name}?"), done)
 
-    def _save_history(self) -> Optional[str]:
+    def _save_history(self, autosave: bool = False) -> Optional[str]:
         try:
             path = storage.save_history(
                 self.full_chat,
                 directory=self.config.get("save_dir", "."),
                 fmt=self.config.get("save_format", "json"),
+                overwrite=self.autosave_path if autosave else None,
             )
         except OSError as exc:
             self._sys(f"Could not save: {exc}", error=True)
             return None
+        if autosave:
+            self.autosave_path = path
         return str(path)
 
     def _apply_config(self, values: Optional[dict]) -> None:
@@ -1113,6 +1155,9 @@ class SekkaApp(App):
         except ConfigError as exc:
             self._sys(f"Invalid configuration: {exc}", error=True)
             return
+        for key, new in values.items():
+            if self.config.values.get(key) != new:
+                self.config.release_override(key)  # user changed it: persist it
         self.config.values.update(values)
         try:
             written = save_config(self.config)
@@ -1148,6 +1193,13 @@ class SekkaApp(App):
                 self._append(f"{labels['assistant']}:\n{content}", "assistant")
             else:
                 self._append(f"(restored context note)\n{content}", "system")
+        # system notes never go mid-chat; fold them into the system prompt
+        notes = [m["content"] for m in messages if m["role"] == "system"]
+        self.chat = [m for m in self.chat if m["role"] != "system"]
+        if notes:
+            self.summary = "\n\n".join(
+                n.replace("[Summary of earlier conversation]\n", "") for n in notes
+            )
         self._sys(f"(resumed {len(messages)} messages from {path})")
         self._update_ctx_label()
 

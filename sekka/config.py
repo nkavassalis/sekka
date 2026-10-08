@@ -72,10 +72,37 @@ class Config:
         values: dict[str, Any],
         path: Optional[Path] = None,
         cli_keys: Optional[set[str]] = None,
+        file_values: Optional[dict[str, Any]] = None,
+        env_keys: Optional[set[str]] = None,
     ) -> None:
         self.values = values
         self.path = path
         self.cli_keys = cli_keys or set()
+        self.env_keys = env_keys or set()
+        # what the config file itself contained (so overrides never get persisted)
+        self.file_values = file_values or {}
+
+    @property
+    def overridden(self) -> set[str]:
+        """Keys whose current value came from the CLI/env, not the file."""
+        return self.cli_keys | self.env_keys
+
+    def release_override(self, key: str) -> None:
+        """The user explicitly set ``key`` in the UI: it may be persisted now."""
+        self.cli_keys.discard(key)
+        self.env_keys.discard(key)
+
+    def persistable(self) -> dict[str, Any]:
+        """Values to write to disk: CLI/env overrides keep their file value
+        (or are omitted when the file never had one), so secrets such as
+        SEKKA_API_KEY are never written by accident."""
+        out = copy.deepcopy(self.values)
+        for key in self.overridden:
+            if key in self.file_values:
+                out[key] = copy.deepcopy(self.file_values[key])
+            else:
+                out.pop(key, None)
+        return out
 
     def __getitem__(self, key: str) -> Any:
         return self.values[key]
@@ -219,6 +246,7 @@ def load_config(
     values = copy.deepcopy(DEFAULT_CONFIG)
 
     path = find_config_file(config_path)
+    file_values: dict[str, Any] = {}
     if path is not None:
         if not path.is_file():
             raise ConfigError(f"Config file not found: {path}")
@@ -238,6 +266,7 @@ def load_config(
     if os.environ.get(ENV_API_KEY):
         env_overrides["api_key"] = os.environ[ENV_API_KEY]
     values = deep_merge(values, env_overrides)
+    env_keys = set(env_overrides)
 
     cli_keys: set[str] = set()
     if cli_overrides:
@@ -250,13 +279,15 @@ def load_config(
     except ConfigError as exc:
         raise ConfigError(f"{exc}") from None
 
-    return Config(values, path=path, cli_keys=cli_keys)
+    return Config(
+        values, path=path, cli_keys=cli_keys, file_values=file_values, env_keys=env_keys
+    )
 
 
 def save_config(config: Config, path: Optional[Path] = None) -> Path:
     """Persist the full configuration to disk. Returns the path written."""
     target = Path(path) if path else (config.path or default_save_path())
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(config.to_dict(), indent=2) + "\n")
+    target.write_text(json.dumps(config.persistable(), indent=2) + "\n")
     config.path = target
     return target

@@ -58,12 +58,17 @@ def save_history(
     directory: str | Path = ".",
     fmt: str = "json",
     now: Optional[datetime] = None,
+    overwrite: Optional[Path] = None,
 ) -> Path:
-    """Write ``messages`` to a timestamped file. Returns the path written."""
+    """Write ``messages`` to a timestamped file. Returns the path written.
+
+    ``overwrite`` rewrites that exact file (used by autosave so one session
+    maps to one file instead of one file per reply).
+    """
     directory = Path(directory).expanduser()
     directory.mkdir(parents=True, exist_ok=True)
     saved_at = now or datetime.now()
-    path = _unique_path(directory, timestamp_name(saved_at, fmt=fmt))
+    path = Path(overwrite) if overwrite else _unique_path(directory, timestamp_name(saved_at, fmt=fmt))
 
     if fmt == "markdown":
         path.write_text(render_markdown(messages, saved_at))
