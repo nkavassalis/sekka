@@ -170,6 +170,10 @@ is called for changed keys only. Don't simplify this back to writing
   allowed but in-memory only - a player needs it, and persisting it would write the host's
   campaign file. `/config` shows a summary that never contains `api_key`. Host-passed
   `--resume FILE` is honoured: that choice was made by whoever owns the config.
+  **Blocking `/save` is a deliberate, owner-approved call** (2026-10-08): letting players
+  keep their own transcript was considered and rejected in favour of "read-only writes
+  nothing", which is easy to state, easy to test, and safe while the save directory is
+  shared. Do not loosen it without asking.
 - **Browser mode wraps, it does not reimplement.** `sekka serve` hands textual-serve a
   *shell command string* (`"<sys.executable> -m sekka" + passthrough`, every token
   `shlex.quote`d because it is handed to a shell) and textual-serve spawns that on a
