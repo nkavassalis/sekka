@@ -39,6 +39,8 @@ bots, and role playing games.
 - Knowledge files as tools: `/knowledge` turns process docs, character cards,
   or lore into read-only tools the model can consult (tool-calling models
   only; the model can never read files you didn't list)
+- Take-backs for collaborative storytelling: `/undo`, `/edit`, `/regen` and
+  `/swipe` (multiple generated versions of a reply, cycled without losing them)
 - Optional thinking overlay (`/thinking`, `ctrl+t`) shows the model's
   reasoning and tool calls - hidden by default
 - Context meter in the corner of the editor (`45k/262k`) with configurable
@@ -104,17 +106,21 @@ Configuration precedence: **CLI flags > environment > config file > defaults**.
 
 ## Slash commands
 
-| Command   | What it does                                            |
-|-----------|---------------------------------------------------------|
-| `/help`   | show commands and current key bindings                  |
-| `/save`   | save history to `sekka_YYYYMMDD_HHMMSS.json` (asks first)|
-| `/config` | open the configuration screen (saved to the config file)|
-| `/models` | re-fetch models from the endpoint and pick one          |
-| `/knowledge` | manage knowledge files offered to the model as tools |
-| `/thinking` | show/hide model thinking & tool calls (also **ctrl+t**)|
-| `/stop`     | stop the reply in flight (also **ctrl+x**)       |
-| `/clear`  | clear the on-screen and sent chat history               |
-| `/exit`   | quit (also **ctrl+c twice**)                            |
+| Command    | What it does                                                |
+|------------|-------------------------------------------------------------|
+| `/help`      | show commands and current key bindings                      |
+| `/save`      | save history to `sekka_YYYYMMDD_HHMMSS.json` (asks first)   |
+| `/config`    | open the configuration screen (saved to the config file)    |
+| `/models`    | pick a model from the endpoint                              |
+| `/knowledge` | manage knowledge files offered to the model as tools        |
+| `/thinking`  | show/hide model thinking & tool calls (also **ctrl+t**)     |
+| `/stop`      | stop the reply in flight (also **ctrl+x**)                  |
+| `/undo`      | delete the last exchange (your message and the reply)       |
+| `/edit`      | put your last message back in the input to fix and resend   |
+| `/regen`     | replace the last reply with a new one (the old one is kept) |
+| `/swipe`     | cycle through the other generated versions of that reply    |
+| `/clear`     | clear the on-screen and sent chat history                   |
+| `/exit`      | quit (also **ctrl+c twice**)                                |
 
 ## Keys
 

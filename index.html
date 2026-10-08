@@ -119,6 +119,11 @@ newer, and nothing heavier than Textual and Requests: the endpoint does the real
   procedure manual) into read-only tools the model can look things up in, instead of stuffing
   everything into the system prompt. It needs a model that supports tool calling, and the model
   can only open the files you listed.</dd>
+  <dt>Take-backs, because scenes go sideways</dt>
+  <dd><code>/undo</code> removes the last exchange, <code>/edit</code> hands your
+  last line back to fix and resend, <code>/regen</code> asks for a different reply
+  and <em>keeps</em> the old one, and <code>/swipe</code> cycles through the
+  versions you generated.</dd>
   <dt>A context meter, and a plan for when it fills</dt>
   <dd>The corner of the input box shows tokens used against the window. When it's full, Sekka
   can stop and tell you, roll the oldest turns off, or have the model compact them into a

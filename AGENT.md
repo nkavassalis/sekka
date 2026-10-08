@@ -86,6 +86,21 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
 - Pause mode must not mutate `chat` (it rolls back the user turn on errors —
   same rollback pattern as API failures).
 
+- **Turn editing (`/undo`, `/edit`, `/regen`, `/swipe`) rebuilds the visible log
+  from `full_chat`** via `_rebuild_history()` instead of surgically removing
+  widgets: fewer states to get wrong, and it mounts in one batch, which also
+  fixed slow session resume (previously one `mount()` + `scroll_end()` per
+  message). Consequences to preserve:
+  - `_display_text()` is the single source of truth for how a stored message
+    looks; `_append()` and `_rebuild_history()` must stay in agreement.
+  - Stats/timing lines and autosave notes are *display-only*: they live in
+    `ui_lines` and disappear on rebuild. Accepted (matches how saves work).
+  - `turn_alts` holds every generated version of the last reply (index
+    `alt_index`); `/regen` pops the assistant turn, sets `_regen_pending`, and
+    the worker appends the new text. The visible reply is always what is in
+    `chat`/`full_chat`, so saves and the next request follow a swipe.
+  - Turn edits are refused while `busy` (stop with ctrl+x first).
+
 ## Decisions (and why)
 
 - **Textual** over prompt_toolkit/urwid: scrollback + TextArea + CSS.
@@ -123,7 +138,8 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
   strictly validates shape/roles/content types+limits, and copies only
   role/content — never render or store whatever a JSON file contains.
   `-r` with no value = picker listing `save_dir` JSON newest-first.
-- Saves: timestamped files, confirm-before-write, no autosave by default.
+- Saves: timestamped files (autosave rewrites one file per session),
+  confirm-before-write, no autosave by default.
 
 ## Deployment (sekka.org) — internals live in LOCAL.md
 

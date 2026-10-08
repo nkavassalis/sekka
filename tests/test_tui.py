@@ -8,6 +8,8 @@ from sekka.client import ChatResponse, ModelInfo
 from sekka.config import DEFAULT_CONFIG, Config
 from textual.widgets import Button, Checkbox, Input, ListItem, Select
 
+_orig_stream = client.stream_chat_completion
+
 from sekka.tui import ConfigScreen, ConfirmScreen, KnowledgeScreen, SekkaApp
 
 
@@ -1036,4 +1038,116 @@ def test_config_screen_exposes_stream_toggle():
             screen.query_one("#config_save", Button).press()
             await wait_for(pilot, lambda: app.config["stream"] is False)
             assert app.config["stream"] is False
+    asyncio.run(go())
+
+
+# --------------------------------------------------- turn editing (RP loop)
+
+
+async def _one_exchange(pilot, app, prompt="tell me a story", reply="Once upon a time."):
+    client.stream_chat_completion = fake_stream([("content", reply)])
+    await run_typing(pilot, prompt)
+    await pilot.press("enter")
+    await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+
+
+def test_undo_removes_the_last_exchange():
+    async def go():
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await _one_exchange(pilot, app)
+                await run_typing(pilot, "/undo")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.full_chat == [])
+                assert app.chat == []
+                assert "Once upon a time." not in history_text(app)
+        finally:
+            client.stream_chat_completion = None
+            old = getattr(client, "stream_chat_completion", None)
+    asyncio.run(go())
+
+
+def test_edit_puts_the_last_message_back_in_the_input():
+    async def go():
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await _one_exchange(pilot, app, prompt="the original line")
+                await run_typing(pilot, "/edit")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.full_chat == [])
+                editor = app.query_one("#input")
+                assert editor.text == "the original line"
+                # resend it and it lands as a fresh exchange
+                client.stream_chat_completion = fake_stream([("content", "second version")])
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                assert app.chat[0]["content"] == "the original line"
+                assert app.chat[-1]["content"] == "second version"
+        finally:
+            pass
+    asyncio.run(go())
+
+
+def test_regen_keeps_alternatives_and_swipe_cycles_them():
+    async def go():
+        app = SekkaApp(make_config(model="m", stream=True))
+        client.stream_chat_completion = fake_stream([("content", "version A")])
+        try:
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "go")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                client.stream_chat_completion = fake_stream([("content", "version B")])
+                await run_typing(pilot, "/regen")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.turn_alts) == 2)
+                assert app.chat[-1]["content"] == "version B"
+                assert "version A" not in history_text(app)
+                await run_typing(pilot, "/swipe")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat[-1]["content"] == "version A")
+                assert app.full_chat[-1]["content"] == "version A"
+                assert "version A" in history_text(app)
+                await run_typing(pilot, "/swipe")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat[-1]["content"] == "version B")
+                # context sent next turn uses the swiped version
+                assert app.chat[-1]["content"] == "version B"
+        finally:
+            client.stream_chat_completion = _orig_stream
+    asyncio.run(go())
+
+
+def test_swipe_and_regen_without_alternatives_are_polite():
+    async def go():
+        app = SekkaApp(make_config(model="m", stream=True))
+        client.stream_chat_completion = fake_stream([("content", "only one")])
+        try:
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "/swipe")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: "Only one version" in history_text(app))
+                await run_typing(pilot, "/undo")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: "Nothing to undo." in history_text(app))
+        finally:
+            client.stream_chat_completion = _orig_stream
+    asyncio.run(go())
+
+
+def test_turn_edit_commands_are_listed_in_help():
+    async def go():
+        client.stream_chat_completion = fake_stream([("content", "x")])
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "/help")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: "/swipe" in history_text(app))
+                for name in ("/undo", "/edit", "/regen"):
+                    assert name in history_text(app)
+        finally:
+            client.stream_chat_completion = _orig_stream
     asyncio.run(go())
