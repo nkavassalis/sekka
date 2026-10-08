@@ -130,6 +130,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Flags that only mean something in `serve` mode. On a plain `sekka` run they are
+# silently meaningless (run_mode defaults to 'chat'), which reads as "my web server
+# started" when it did not - and worse, --serve-host/--serve-port would still be
+# written into the config overrides. So: reject them before anything is loaded.
+SERVE_ONLY_FLAGS = (
+    "serve_host",
+    "serve_port",
+    "serve_title",
+    "serve_allow_public",
+    "serve_readonly",
+)
+
+
+def serve_only_flags(args: argparse.Namespace) -> list[str]:
+    """Which --serve-* flags the user actually typed, as `--dashed-names`."""
+    given = []
+    for name in SERVE_ONLY_FLAGS:
+        value = getattr(args, name, None)
+        if value is True or (not isinstance(value, bool) and value is not None):
+            given.append("--" + name.replace("_", "-"))
+    return given
+
+
+def serve_mode_error(args: argparse.Namespace) -> Optional[str]:
+    """Refusal text when --serve-* flags appear without the `serve` mode."""
+    if args.run_mode == "serve":
+        return None
+    stray = serve_only_flags(args)
+    if not stray:
+        return None
+    return (
+        f"{' '.join(stray)} only {'apply' if len(stray) > 1 else 'applies'} to 'sekka "
+        f"serve'. Add the 'serve' mode to the command line, e.g. "
+        f"'sekka serve {stray[0]} ...'. Nothing was served and nothing was written."
+    )
+
+
 def split_passthrough(argv: Optional[list[str]]) -> tuple[list[str], list[str]]:
     """Split argv on a bare `--`.
 
@@ -147,6 +184,10 @@ def split_passthrough(argv: Optional[list[str]]) -> tuple[list[str], list[str]]:
 def main(argv: Optional[list[str]] = None) -> int:
     own_args, passthrough = split_passthrough(argv)
     args = build_parser().parse_args(own_args)
+    refusal = serve_mode_error(args)
+    if refusal:
+        print(f"sekka: {refusal}", file=sys.stderr)
+        return 2
     overrides = {
         "endpoint": args.endpoint,
         "model": args.model,
