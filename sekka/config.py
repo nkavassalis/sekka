@@ -31,6 +31,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "system_prompt": "You are a helpful assistant.",
     "temperature": 0.7,
     "max_tokens": None,
+    "top_p": None,
+    "min_p": None,
+    "presence_penalty": None,
+    "frequency_penalty": None,
+    "repetition_penalty": None,
+    "stop": [],
     "request_timeout": 300,
     "history_percent": 80,
     "context_window": None,
@@ -99,6 +105,16 @@ def _validate_knowledge_entries(entries: Any, where: str) -> None:
                     f"Each 'keywords' item in a {where} entry must be a short non-empty string."
                 )
 
+
+SAMPLER_RANGES = {
+    "top_p": (0.0, 1.0),
+    "min_p": (0.0, 1.0),
+    "presence_penalty": (-2.0, 2.0),
+    "frequency_penalty": (-2.0, 2.0),
+    "repetition_penalty": (0.0, 2.0),
+}
+MAX_STOP_SEQUENCES = 8
+MAX_STOP_CHARS = 512
 
 VALID_SAVE_FORMATS = {"json", "markdown"}
 VALID_CONTEXT_MODES = {"pause", "rolling", "compact"}
@@ -238,6 +254,26 @@ def validate_config(values: dict[str, Any]) -> None:
             f"Config 'save_format' must be one of {sorted(VALID_SAVE_FORMATS)}."
         )
 
+    for name, (low, high) in SAMPLER_RANGES.items():
+        value = values.get(name)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConfigError(f"Config '{name}' must be a number or null.")
+        if not low <= float(value) <= high:
+            raise ConfigError(f"Config '{name}' must be between {low} and {high}.")
+
+    stops = values.get("stop")
+    if not isinstance(stops, list) or len(stops) > MAX_STOP_SEQUENCES:
+        raise ConfigError(
+            f"Config 'stop' must be a list of up to {MAX_STOP_SEQUENCES} strings."
+        )
+    for sequence in stops:
+        if not isinstance(sequence, str) or not sequence or len(sequence) > MAX_STOP_CHARS:
+            raise ConfigError(
+                f"Each 'stop' entry must be a non-empty string of at most {MAX_STOP_CHARS} chars."
+            )
+
     percent = values.get("history_percent")
     if not isinstance(percent, int) or isinstance(percent, bool) or not 50 <= percent <= 95:
         raise ConfigError("Config 'history_percent' must be an integer between 50 and 95.")
@@ -289,6 +325,7 @@ def validate_config(values: dict[str, Any]) -> None:
 CAMPAIGN_KEYS = {
     "name", "system_prompt", "labels", "knowledge", "temperature", "max_tokens",
     "reasoning", "greeting", "player", "note",
+    "top_p", "min_p", "presence_penalty", "frequency_penalty", "repetition_penalty", "stop",
 }
 
 MAX_NOTE_CHARS = 20_000
@@ -312,6 +349,16 @@ def validate_campaign(values: dict[str, Any]) -> None:
         raise ConfigError("Campaign 'max_tokens' must be an integer or null.")
     if "note" in values and isinstance(values["note"], str) and len(values["note"]) > MAX_NOTE_CHARS:
         raise ConfigError(f"Campaign 'note' must be at most {MAX_NOTE_CHARS} characters.")
+    for name in SAMPLER_RANGES:
+        if name in values and values[name] is not None and (
+            isinstance(values[name], bool) or not isinstance(values[name], (int, float))
+        ):
+            raise ConfigError(f"Campaign '{name}' must be a number or null.")
+    if "stop" in values and (
+        not isinstance(values["stop"], list)
+        or any(not isinstance(x, str) or not x for x in values["stop"])
+    ):
+        raise ConfigError("Campaign 'stop' must be a list of non-empty strings.")
     if "reasoning" in values and values["reasoning"] not in VALID_REASONING:
         raise ConfigError(f"Campaign 'reasoning' must be one of {sorted(VALID_REASONING)}.")
     if "labels" in values:

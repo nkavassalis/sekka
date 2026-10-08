@@ -124,6 +124,11 @@ newer, and nothing heavier than Textual and Requests: the endpoint does the real
   procedure manual) into read-only tools the model can look things up in, instead of stuffing
   everything into the system prompt. It needs a model that supports tool calling, and the model
   can only open the files you listed.</dd>
+  <dt>Dice you can point at</dt>
+  <dd><code>/roll 2d6+3</code> rolls from <code>os.urandom</code>, shows the individual
+  dice, and puts the result into the model's context - so it can narrate the failure
+  but cannot quietly fudge the number. <code>/ooc</code> and <code>ctrl+o</code> handle
+  talking to the table rather than the character.</dd>
   <dt>A running state that survives the long game</dt>
   <dd><code>/note</code> pins a short block - inventory, injuries, promises, the
   state of the door - into every request, so it outlives summarising and it is

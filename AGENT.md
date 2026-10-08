@@ -208,6 +208,21 @@ is called for changed keys only. Don't simplify this back to writing
 - **Streaming sends `stream_options: {include_usage: true}`** so the context
   meter shows real usage mid-stream, and retries once without it on HTTP 400 for
   servers that reject unknown params. Meter falls back to the estimate there.
+- **Dice (`sekka/dice.py`, `/roll`)** use `random.SystemRandom` and are queued in
+  `_pending_dice`, then **prepended to the next user message** as
+  `[dice] 2d6+3 = 9 (4, 2) +3` rather than sent as their own turn: templates
+  dislike consecutive same-role turns, and the number reads better attached to
+  the action it belongs to. `/undo` and `/clear` drop the queue; a roll is never
+  a chat turn by itself. Live check: the model quoted the exact rolled number
+  back when asked, proving it came from context.
+- **`/ooc` / `ctrl+o`** wrap the text as `(OOC: ...)` and send a normal user
+  turn. Deliberately *not* a separate role or display class: it must save, resume
+  and roll context exactly like any other message (the prefix keeps the meaning
+  after a rebuild), and the model must be free to answer it.
+- **Sampler params (`top_p`, `min_p`, penalties, `stop`) are absent unless set.**
+  `_add_samplers` omits `None`, because `min_p`/`repetition_penalty` are
+  vLLM/llama.cpp extensions and a strict endpoint 400s on unknown keys. Test
+  `test_unset_samplers_are_not_sent` guards this - do not default them to numbers.
 - **Pinned note (`note`, `/note`) is appended LAST in the system prompt**
   (recency wins for instruction-following) and is the one thing `compact` cannot
   summarise away. Details that matter:

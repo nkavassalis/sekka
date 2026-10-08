@@ -86,6 +86,12 @@ def stream_chat_completion(
     timeout: float = 120.0,
     tools: Optional[list[dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
+    top_p: Optional[float] = None,
+    min_p: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+    stop: Optional[list[str]] = None,
     stop_event: Optional["threading.Event"] = None,
 ) -> "Iterator[StreamEvent]":
     """POST /chat/completions with stream=true and yield progress events.
@@ -109,6 +115,15 @@ def stream_chat_completion(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    _add_samplers(
+        payload,
+        top_p=top_p,
+        min_p=min_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        repetition_penalty=repetition_penalty,
+        stop=stop,
+    )
 
     def post(body: dict[str, Any]) -> requests.Response:
         try:
@@ -274,6 +289,23 @@ def list_models(endpoint: str, api_key: str = "", timeout: float = 15.0) -> list
     return infos
 
 
+def _add_samplers(payload: dict[str, Any], **values: Any) -> None:
+    """Add optional sampler params, only when the user actually set them.
+
+    min_p and repetition_penalty are vLLM/llama.cpp extensions rather than OpenAI
+    fields, so sending them unasked would make strict endpoints reject the whole
+    request. Absent means "endpoint default".
+    """
+    for name, value in values.items():
+        if value is None:
+            continue
+        if name == "stop":
+            if value:
+                payload["stop"] = list(value)
+            continue
+        payload[name] = value
+
+
 def chat_completion(
     endpoint: str,
     model: str,
@@ -284,6 +316,12 @@ def chat_completion(
     timeout: float = 120.0,
     tools: Optional[list[dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
+    top_p: Optional[float] = None,
+    min_p: Optional[float] = None,
+    presence_penalty: Optional[float] = None,
+    frequency_penalty: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+    stop: Optional[list[str]] = None,
 ) -> ChatResponse:
     """POST {endpoint}/chat/completions and return content + usage + timing."""
     url = _base(endpoint) + "/chat/completions"
@@ -297,6 +335,15 @@ def chat_completion(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    _add_samplers(
+        payload,
+        top_p=top_p,
+        min_p=min_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        repetition_penalty=repetition_penalty,
+        stop=stop,
+    )
 
     start = time.monotonic()
     try:

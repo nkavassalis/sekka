@@ -1566,3 +1566,157 @@ def test_compaction_keeps_the_pinned_note_in_the_system_prompt():
         finally:
             client.chat_completion = old
     asyncio.run(go())
+
+
+# ------------------------------------------------------- dice, ooc, samplers
+
+
+def test_roll_prints_dice_and_folds_them_into_the_next_message():
+    async def go():
+        client.stream_chat_completion = fake_stream([("content", "You fail the check.")])
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "/roll 2d6+3")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: any("dice:" in t for _, t in app.ui_lines))
+                assert len(app.chat) == 0                 # a roll is not a turn
+                assert len(app._pending_dice) == 1
+                assert app.full_chat == []
+                await run_typing(pilot, "I jump the gap")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and app.chat)
+                assert app._pending_dice == []
+                assert app.chat[-2]["role"] == "user"
+                assert app.chat[-2]["content"].startswith("[dice] 2d6+3 = ")
+                assert app.chat[-2]["content"].endswith("I jump the gap")
+        finally:
+            client.stream_chat_completion = _orig_stream
+    asyncio.run(go())
+
+
+def test_roll_errors_do_not_queue_anything():
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await run_typing(pilot, "/roll nonsense")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "Cannot understand" in history_text(app))
+            assert app._pending_dice == []
+            await run_typing(pilot, "/roll")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: "Usage" in history_text(app))
+    asyncio.run(go())
+
+
+def test_ooc_command_and_sticky_mode_wrap_the_message():
+    async def go():
+        client.stream_chat_completion = fake_stream([("content", "Noted.")])
+        try:
+            app = SekkaApp(make_config(model="m", stream=True))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "/ooc can you shorten the scenes?")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat and app.chat[-1]["role"] == "assistant")
+                assert app.chat[-2]["content"] == "(OOC: can you shorten the scenes?)"
+
+                await pilot.press("ctrl+o")
+                assert app.ooc_mode is True
+                assert "OOC mode on" in app.notice_text
+                await run_typing(pilot, "what happened so far?")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat[-2]["content"] == "(OOC: what happened so far?)")
+
+                await pilot.press("ctrl+o")
+                assert app.ooc_mode is False
+                await run_typing(pilot, "I look around")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: app.chat[-2]["content"] == "I look around")
+        finally:
+            client.stream_chat_completion = _orig_stream
+    asyncio.run(go())
+
+
+def test_sampler_params_reach_the_request_payload():
+    seen = {}
+
+    def capture(endpoint, model, messages, **kwargs):
+        seen.update(kwargs)
+        yield client.StreamEvent(content="ok")
+        yield client.StreamEvent(
+            content="ok", message={"role": "assistant", "content": "ok"},
+            completion_tokens=1, elapsed=0.1,
+        )
+
+    async def go():
+        old = client.stream_chat_completion
+        client.stream_chat_completion = capture
+        try:
+            cfg = make_config(
+                model="m", stream=True, top_p=0.9, min_p=0.05, presence_penalty=0.3,
+                frequency_penalty=0.2, repetition_penalty=1.1, stop=["Player:"],
+            )
+            app = SekkaApp(cfg)
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hi")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy)
+        finally:
+            client.stream_chat_completion = old
+
+    asyncio.run(go())
+    assert seen["top_p"] == 0.9
+    assert seen["min_p"] == 0.05
+    assert seen["presence_penalty"] == 0.3
+    assert seen["frequency_penalty"] == 0.2
+    assert seen["repetition_penalty"] == 1.1
+    assert seen["stop"] == ["Player:"]
+
+
+def test_unset_samplers_are_not_sent():
+    """Absent must mean 'don't send', or strict endpoints 400 on extensions."""
+    from sekka import client as c
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        captured.update(json or {})
+
+        class R:
+            status_code = 200
+            headers = {"Content-Type": "application/json"}
+
+            def json(self):
+                return {"choices": [{"message": {"role": "assistant", "content": "x"}}]}
+
+            @property
+            def text(self):
+                return ""
+
+        return R()
+
+    old = c.requests.post
+    c.requests.post = fake_post
+    try:
+        c.chat_completion("http://x/v1", "m", [{"role": "user", "content": "hi"}], temperature=0.5)
+    finally:
+        c.requests.post = old
+    for key in ("top_p", "min_p", "presence_penalty", "frequency_penalty", "repetition_penalty", "stop"):
+        assert key not in captured, f"{key} sent when unset"
+    assert captured["temperature"] == 0.5
+
+
+def test_config_screen_round_trips_a_sampler_value():
+    async def go():
+        app = SekkaApp(make_config(model="m"))
+        async with app.run_test(size=(110, 44)) as pilot:
+            await run_typing(pilot, "/config")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, ConfigScreen))
+            screen = app.screen
+            screen.query_one("#cfg_top_p", Input).value = "0.8"
+            screen.query_one("#cfg_stop", Input).value = "Player:, GM:"
+            screen.query_one("#config_save", Button).press()
+            await wait_for(pilot, lambda: app.config["top_p"] == 0.8)
+        assert app.config["stop"] == ["Player:", "GM:"]
+    asyncio.run(go())
