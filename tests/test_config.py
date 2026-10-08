@@ -39,7 +39,7 @@ def test_defaults_when_no_file():
     assert cfg["model"] == ""
     assert cfg["autosave"] is False
     assert cfg["keys"]["submit"] == "enter"
-    assert cfg["theme"]["user"] == "cyan"
+    assert cfg["theme"]["user"] == "bright_cyan"
 
 
 def test_file_values_are_merged(clean_env):
@@ -367,3 +367,26 @@ def test_sampler_validation():
     ):
         with pytest.raises(ConfigError):
             validate_config(base(**bad))
+
+
+def test_default_theme_colors_are_bright_enough():
+    """The default palette must survive truecolor rendering.
+
+    Plain ANSI names are the *dark* half of the set (cyan = #008080, red =
+    #800000). A terminal substitutes its own palette for those slots and looks
+    fine; a browser (textual-serve) paints the literal RGB and the UI reads faint.
+    So every default role color has to carry real luminance of its own.
+    """
+    from rich.color import Color
+
+    def peak(name):
+        """Brightest channel. Half-intensity web names peak at 128; the defaults
+        must not, or they only look bright because the terminal re-maps them."""
+        rgb = Color.parse(name).get_truecolor()
+        return max(rgb.red, rgb.green, rgb.blue)
+
+    theme = DEFAULT_CONFIG["theme"]
+    for role, color in theme.items():
+        assert peak(color) >= 160, f"default theme color {role}={color} is too dark"
+    # and the names must stay parseable by rich, as documented
+    assert set(theme) == {"user", "assistant", "system", "stats", "error"}

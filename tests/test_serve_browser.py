@@ -143,19 +143,27 @@ def page_state(page) -> dict:
     styles are render-blocking, so `.textual-terminal` can be missing for a while)."""
     return page.evaluate("""() => {
       const term = document.querySelector('.textual-terminal');
-      if (!term) return {ready: false, classes: '', wsUrl: null, introVisible: true, litPixels: 0};
+      if (!term) return {ready: false, classes: '', wsUrl: null, introVisible: true, litPixels: 0,
+                         inkFraction: 0, meanInkLuma: 0, roboto: false};
       const canvas = term.querySelector('canvas');
-      let lit = 0;
+      let ink = 0, lum = 0, total = 0;
       if (canvas) {
         const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-        for (let i = 0; i < d.length; i += 4) if (d[i] > 60 || d[i+1] > 60 || d[i+2] > 60) lit++;
+        for (let i = 0; i < d.length; i += 4) {
+          const l = 0.2126*d[i] + 0.7152*d[i+1] + 0.0722*d[i+2];
+          total++;
+          if (l > 40) { ink++; lum += l; }
+        }
       }
       return {
         ready: true,
         classes: document.body.className,
         wsUrl: term.dataset.sessionWebsocketUrl,
         introVisible: document.querySelector('.intro-dialog').getClientRects().length > 0,
-        litPixels: lit,
+        litPixels: ink,
+        inkFraction: total ? ink / total : 0,
+        meanInkLuma: ink ? Math.round(lum / ink) : 0,
+        roboto: [...document.fonts].some(f => /Roboto Mono/i.test(f.family) && f.status === 'loaded'),
       };
     }""")
 
@@ -207,5 +215,26 @@ def test_typing_through_the_forwarded_page_reaches_the_app(served, browser):
         state = page_state(page)
         assert state["ready"] and state["litPixels"] > 200
         assert "-closed" not in state["classes"]
+    finally:
+        page.close()
+
+
+def test_served_screen_uses_the_intended_font_and_a_bright_palette(served, browser):
+    """Guards the 'the browser looks faint next to a terminal' complaint.
+
+    textual.js asks xterm for `'Roboto Mono', Monaco, ...`. textual-serve ships the
+    TTF but upstream only ever referenced it from a CDN stylesheet, which sekka does
+    not load, so the @font-face rules in the template are what keep the terminal on
+    that face instead of a thinner fallback. The luma floor is the other half: the
+    pre-2026-10 default theme measured ~102 on this same screen.
+    """
+    page = browser.new_page(viewport={"width": 1100, "height": 650})
+    try:
+        first_page(page, served)
+        page.wait_for_timeout(2500)
+        state = page_state(page)
+        assert state["roboto"], "terminal fell back to a substitute monospace face"
+        assert state["meanInkLuma"] > 130, f"rendering is faint: {state}"
+        assert state["inkFraction"] > 0.003, f"almost nothing drawn: {state}"
     finally:
         page.close()

@@ -192,6 +192,11 @@ line. `sekka --serve-port 9100` is refused with an explanation instead of
 silently opening the terminal UI and ignoring the flag (nothing is loaded or
 written when it refuses).
 
+The browser paints your `theme` colors literally, so the defaults name bright
+colors (`bright_cyan`, `gold1`, ...): the plain ANSI names are the dark half of the
+set - `cyan` is `#008080`, `red` is `#800000` - and a terminal only looks brighter
+because your emulator substitutes its own palette for those slots.
+
 **Whichever address you open the page on, the terminal follows.** The page opens
 its terminal socket back to its own origin rather than to whatever address the
 server bound, so a LAN address, a port-forward, an SSH tunnel on a different

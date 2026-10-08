@@ -190,12 +190,16 @@ is called for changed keys only. Don't simplify this back to writing
   prefixed proxy got a socket to the wrong place: the page sat on the intro overlay
   (Textual "T" + app name) forever, which reads as "the web UI renders nothing".
   Our template computes the socket URL same-origin from `location`, uses relative
-  static paths, and drops the render-blocking `fonts.googleapis.com` link (offline
-  or privacy-blocked networks then hang a local tool on a third-party CDN). All
-  three are deliberate: re-apply them if you re-base the template on a new
-  textual-serve. `--serve-public-url` is the escape hatch - it sets `public_url`
-  and falls back to the *stock* template, since an absolute URL is the one thing the
-  browser cannot infer. Covered by `tests/test_serve_browser.py`, which loads the
+  static paths, serves Roboto Mono from the TTFs textual-serve already ships, and
+  drops the render-blocking `fonts.googleapis.com` link (offline or privacy-blocked
+  networks then hang a local tool on a third-party CDN). All of it is deliberate:
+  re-apply them if you re-base the template on a new textual-serve. **Deleting the
+  CDN link is not enough on its own** - textual.js hardcodes
+  `fontFamily: "'Roboto Mono', Monaco, 'Courier New', monospace"`, so without the
+  @font-face rules the terminal silently drops to a thinner fallback face and the UI
+  reads faint. `--serve-public-url` is the escape hatch for the URL - it sets
+  `public_url` and falls back to the *stock* template, since an absolute URL is the
+  one thing the browser cannot infer. Covered by `tests/test_serve_browser.py`, which loads the
   page through a local port-forwarder so the bind address really differs from the
   URL typed.
 - **Browser mode wraps, it does not reimplement.** `sekka serve` hands textual-serve a
@@ -314,6 +318,17 @@ is called for changed keys only. Don't simplify this back to writing
     prompt prefix and so invalidates backend prompt caching - accepted, and the
     reason the cap exists; do not raise it casually.
   - `always` entries load at mount (`_load_always_lore`), before the greeting.
+- **Theme colors are painted literally in the browser, so the default palette names
+  bright colors.** The served session runs with `TEXTUAL_COLOR_SYSTEM=truecolor`, and the
+  basic ANSI names are the *dark* half of the set (`cyan` = `#008080`, `yellow` =
+  `#808000`, `red` = `#800000`). In a terminal the emulator substitutes its own palette
+  for those slots and most palettes brighten them, so the identical theme reads bright
+  there and faint in the browser - the fix was the palette, not the page. Defaults are
+  now `bright_cyan` / `violet` / `gold1` / `grey66` / `bright_red`, and
+  `test_default_theme_colors_are_bright_enough` rejects any default whose brightest
+  channel falls under 160. Measured mean ink luminance on the boot screen: 102 -> 166.
+  Note a user's own config file wins over these defaults (sekka's merge is per-key), so
+  an existing `theme` block keeps the old colors until edited.
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.
@@ -401,7 +416,7 @@ but nothing here actually ran one).
 
 - Dev endpoint URL/model and local overrides go in `.sekka/config.json`
   (auto-discovered, gitignored). See `LOCAL.md`.
-- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 249 tests, all
+- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 251 tests, all
   should pass in ~120 s - the SSE tests sleep deliberately). `conftest.py` keeps
   tests off the real config/network. The fresh venv needs `pip install -e '.[dev]'`
   **and** `pip install 'textual-serve>=1.1'`: without the serve extra,

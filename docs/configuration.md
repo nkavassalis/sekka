@@ -54,11 +54,11 @@ Precedence of a single value: **CLI flag > environment variable > campaign file
   "save_format": "json",
   "labels": {"user": "You", "assistant": "Assistant"},
   "theme": {
-    "user": "cyan",
-    "assistant": "magenta",
-    "system": "yellow",
-    "stats": "grey58",
-    "error": "red"
+    "user": "bright_cyan",
+    "assistant": "violet",
+    "system": "gold1",
+    "stats": "grey66",
+    "error": "bright_red"
   },
   "keys": {
     "submit": "enter",
@@ -386,13 +386,21 @@ according to `context_mode`:
 ### `theme`
 
 Colors accept anything [rich](https://rich.readthedocs.io/) understands:
-`"cyan"`, `"magenta"`, `"grey58"`, `"bright_green"`, `"#ff8800"`, ...
+`"bright_cyan"`, `"violet"`, `"grey66"`, `"bright_green"`, `"#ff8800"`, ...
 
 - `user` — your messages
 - `assistant` — model replies
 - `system` — sekka's own notices and the input border
 - `stats` — the dim `[time, tok/s]` line after each reply
 - `error` — error notices
+
+Prefer the `bright_*` names, a 256-colour name like `gold1`, or an explicit hex.
+The bare basic names (`cyan`, `yellow`, `red`, `magenta`) are the *dark* members
+of the ANSI set - `cyan` is `#008080`, `yellow` is `#808000`, `red` is `#800000`.
+In a terminal you rarely notice, because the terminal substitutes its own palette
+for those slots and most palettes brighten them; a browser (and any truecolor
+rendering) paints the literal value, and the whole UI reads faint. That is why the
+defaults name the bright variants outright.
 
 Invalid colors are rejected at startup with a clear message.
 

@@ -14,13 +14,40 @@
   2. Static assets are referenced relative to the page, for the same reason (and
      so a path-prefix proxy keeps working).
   3. No fonts.googleapis.com link. It was render-blocking on offline, firewalled
-     or privacy-blocked networks - a third-party CDN standing between a local tool
-     and its own terminal. The monospace stack below is the one the CSS already
-     falls back to.
+     or privacy-blocked networks. The face textual.js asks for by name is served
+     from the TTFs textual-serve already ships (see the @font-face rules): without
+     them the terminal silently falls back to a thinner monospace and the whole UI
+     reads faint next to a real terminal.
 -->
 <html>
   <head>
     <link rel="stylesheet" href="static/css/xterm.css" />
+
+    <!--
+      Roboto Mono, self-hosted from the TTFs textual-serve already ships at
+      /static/fonts/. textual.js hardcodes `fontFamily: "'Roboto Mono', Monaco,
+      'Courier New', monospace"`, so without a @font-face rule the terminal
+      silently falls back to whatever monospace the browser has - a lighter, thinner
+      face that makes the whole UI read as faint next to a real terminal. Upstream
+      pulled this font from fonts.googleapis.com, which a local tool must not do.
+      The weight range is declared so bold text still synthesises from this family.
+    -->
+    <style>
+      @font-face {
+        font-family: "Roboto Mono";
+        font-style: normal;
+        font-weight: 100 900;
+        src: url("static/fonts/RobotoMono-VariableFont_wght.ttf") format("truetype-variations");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Roboto Mono";
+        font-style: italic;
+        font-weight: 100 900;
+        src: url("static/fonts/RobotoMono-Italic-VariableFont_wght.ttf") format("truetype-variations");
+        font-display: block;
+      }
+    </style>
 
     <script src="static/js/textual.js"></script>
     <style>
