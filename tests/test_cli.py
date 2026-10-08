@@ -48,6 +48,13 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "--context-window", "16384",
         "--context-mode", "rolling",
         "--stream",
+        "--top-p", "0.9",
+        "--min-p", "0.05",
+        "--presence-penalty", "0.1",
+        "--frequency-penalty", "0.2",
+        "--repetition-penalty", "1.1",
+        "--stop", "Player:",
+        "--stop", "GM:",
         "--save-dir", "/tmp/saves",
         "--save-format", "markdown",
         "--autosave",
@@ -68,6 +75,12 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "save_dir": "/tmp/saves",
         "save_format": "markdown",
         "autosave": True,
+        "top_p": 0.9,
+        "min_p": 0.05,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+        "repetition_penalty": 1.1,
+        "stop": ["Player:", "GM:"],
     }
 
 
@@ -112,6 +125,9 @@ def test_all_scalar_config_keys_have_a_flag(monkeypatch):
     box = captured_main(monkeypatch, [
         "--endpoint", "e", "--model", "m", "--system", "s", "--api-key", "k",
         "--temperature", "0.5", "--max-tokens", "10", "--timeout", "10",
+        "--top-p", "0.9", "--min-p", "0.05", "--presence-penalty", "0.1",
+        "--frequency-penalty", "0.2", "--repetition-penalty", "1.1", "--stop", "Player:",
+        "--stop", "GM:",
         "--reasoning", "none", "--history-percent", "60", "--context-window",
         "1024", "--context-mode", "pause", "--save-dir", ".", "--save-format",
         "json", "--autosave",

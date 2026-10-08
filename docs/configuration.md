@@ -157,6 +157,28 @@ that already arrived, marked `[stopped]`; it also frees the editor immediately
 when the endpoint has gone quiet, though an abandoned request may still be
 finishing server-side. Streaming is skipped for the `/compact` summary call.
 
+### Dice, out-of-character messages, and samplers
+
+**`/roll 2d6+3`** - dice come from `random.SystemRandom` (`os.urandom`), the
+individual throws are shown (`2d6+3 = 9 (4, 2) +3`), and the result is queued to
+ride along **in front of your next message**, where the model can see it. That
+placement is deliberate: the number arrives with the action it belongs to, and
+the model cannot quietly invent a better one. Supports `d20`, `2d6`, `3d6+2`,
+`2d8-1d4+3`; a bare `/roll` explains the syntax.
+
+**`/ooc <text>`** wraps one message as `(OOC: ...)`; **`ctrl+o`** toggles a mode
+where everything you type is wrapped until you switch it back (the status row
+shows `OOC mode on`). It is still an ordinary user turn, so the model can answer
+it, and it saves like any other line.
+
+**Samplers**: `top_p`, `min_p`, `presence_penalty`, `frequency_penalty`,
+`repetition_penalty`, `stop` (list of up to 8 sequences). All default to *unset*,
+and unset means the key is **not sent at all** - `min_p` and `repetition_penalty`
+are vLLM/llama.cpp extensions a strict OpenAI endpoint would reject, so sekka
+never volunteers them. Each has a CLI flag (`--top-p`, `--stop`, ...) and a field
+in `/config`. A campaign may carry them too, so a scenario can ask for a hotter
+sampler and get it.
+
 ### The pinned note (`note`, `/note`)
 
 `note` is a short block of text appended **last** in the system prompt, so the
@@ -251,6 +273,12 @@ according to `context_mode`:
 | `greeting`        | string          | `""`                          | Opening scene (usually from a campaign); shown + in context |
 | `player`          | string          | `""`                          | Your character, appended to the system prompt |
 | `note`            | string          | `""`                          | Pinned running state, sent last; `/note` edits it |
+| `top_p`             | float \| null   | `null` (endpoint)             | Nucleus sampling cutoff (0-1) |
+| `min_p`             | float \| null   | `null` (endpoint)             | min-p cutoff (vLLM / llama.cpp extension) |
+| `presence_penalty`  | float \| null   | `null` (endpoint)             | Presence penalty (-2 to 2) |
+| `frequency_penalty` | float \| null   | `null` (endpoint)             | Frequency penalty (-2 to 2) |
+| `repetition_penalty`| float \| null   | `null` (endpoint)             | Repetition penalty (0-2, vLLM / llama.cpp) |
+| `stop`              | list of strings | `[]`                          | Stop sequences (up to 8) |
 | `stream`          | bool            | `true`                        | Stream replies into the view; `--no-stream` shows them whole |
 | `autosave`        | bool            | `false`                       | Update one session file after every reply (first write picks the timestamped name; manual `/save` still asks first) |
 

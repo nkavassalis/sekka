@@ -45,6 +45,12 @@ bots, and role playing games.
 - **Pinned state**: `/note` keeps a short block (inventory, injuries, promises,
   "the door is still barred") in every request, so it survives summarising and
   long scenes; `/note +text` appends and it saves itself into your campaign
+- **Real dice**: `/roll 2d6+3` rolls from `os.urandom`, shows the individual
+  dice, and puts the result in the model's context so it cannot fudge the outcome
+- **Out of character**: `/ooc <text>` for one message, `ctrl+o` to toggle it for
+  everything you type until you switch it back
+- Sampler control: `top_p`, `min_p`, penalties and stop sequences - sent only
+  when you set them, so strict endpoints never see an unknown key
 - Take-backs for collaborative storytelling: `/undo`, `/edit`, `/regen` and
   `/swipe` (multiple generated versions of a reply, cycled without losing them)
 - **Campaigns**: a `campaign.json` beside your config holds the system prompt,
@@ -100,6 +106,12 @@ sekka [options]
 --context-window N     total context tokens for the meter (default: endpoint's)
 --context-mode MODE    pause|rolling|compact when the window fills
 --stream               show replies token by token (--stream / --no-stream)
+--top-p FLOAT          nucleus sampling (unset = endpoint default)
+--min-p FLOAT          min-p sampling (vLLM/llama.cpp extension)
+--presence-penalty F   presence penalty
+--frequency-penalty F  frequency penalty
+--repetition-penalty F repetition penalty (vLLM/llama.cpp extension)
+--stop SEQ             stop sequence; repeat the flag for several
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
@@ -131,6 +143,8 @@ file > defaults** - so one campaign can be pointed at any endpoint.
 | `/models`    | pick a model from the endpoint                              |
 | `/knowledge` | manage knowledge files offered to the model as tools        |
 | `/note`      | show / set / `+append` / clear the pinned running state    |
+| `/roll`      | roll real dice, e.g. `/roll 2d6+3` (goes into context)     |
+| `/ooc`       | say something out of character, as one message            |
 | `/campaign`  | show the loaded campaign, or load one: `/campaign FILE`   |
 | `/thinking`  | show/hide model thinking & tool calls (also **ctrl+t**)     |
 | `/stop`      | stop the reply in flight (also **ctrl+x**)                  |
@@ -156,6 +170,7 @@ Defaults (configurable via the `keys` block in the config file, see
 | `ctrl+c`    | quit - press twice within 2 s (copies a selection if one exists) |
 | `ctrl+t`    | show/hide model thinking & tool calls |
 | `ctrl+x`    | stop the reply in flight (keeps what arrived) |
+| `ctrl+o`    | out-of-character mode on/off |
 | `escape`    | clear the input box             |
 
 Thinking and tool-call lines are hidden by default and always start hidden;

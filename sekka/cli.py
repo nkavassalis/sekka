@@ -54,6 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="show replies token by token (--stream / --no-stream)",
     )
+    parser.add_argument("--top-p", type=float, help="nucleus sampling cutoff (endpoint default if unset)")
+    parser.add_argument("--min-p", type=float, help="min-p cutoff (vLLM/llama.cpp extension)")
+    parser.add_argument("--presence-penalty", type=float, help="presence penalty")
+    parser.add_argument("--frequency-penalty", type=float, help="frequency penalty")
+    parser.add_argument(
+        "--repetition-penalty", type=float, help="repetition penalty (vLLM/llama.cpp extension)"
+    )
+    parser.add_argument(
+        "--stop",
+        action="append",
+        metavar="SEQ",
+        help="stop sequence; repeat the flag for several (e.g. --stop 'Player: --')",
+    )
     parser.add_argument("--save-dir", help="where /save and autosave write files")
     parser.add_argument(
         "--save-format", choices=["json", "markdown"], help="saved file format"
@@ -91,6 +104,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         "api_key": args.api_key,
         "temperature": args.temperature,
         "max_tokens": args.max_tokens,
+        "top_p": args.top_p,
+        "min_p": args.min_p,
+        "presence_penalty": args.presence_penalty,
+        "frequency_penalty": args.frequency_penalty,
+        "repetition_penalty": args.repetition_penalty,
+        "stop": args.stop,
         "request_timeout": args.timeout,
         "reasoning": args.reasoning,
         "stream": args.stream,

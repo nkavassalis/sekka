@@ -26,7 +26,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DirectoryTree, Input, Label, ListItem, ListView, Select, Static, TextArea
 
-from . import client, commands, storage
+from . import client, commands, dice, storage
 from .config import (
     DEFAULT_CONFIG,
     Config,
@@ -169,6 +169,8 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
     #cfg_scroll { width: 1fr; height: 1fr; }
     ConfigScreen Label { padding-top: 1; color: $primary; }
     #config_labels Input { width: 1fr; }
+    #config_samplers { height: auto; }
+    #config_samplers Input { width: 1fr; }
     #config_labels { height: auto; }
     ConfigScreen TextArea { height: 6; border: round $primary 40%; }
     ConfigScreen Input { border: round $primary 40%; }
@@ -206,6 +208,14 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 yield Input(value=_blank_if_none(values.get("temperature")), id="cfg_temperature")
                 yield Label("Max tokens (blank = endpoint default)")
                 yield Input(value=_blank_if_none(values.get("max_tokens")), id="cfg_max_tokens")
+                yield Label("Sampler tweaks (blank = endpoint default; min_p / repetition_penalty need vLLM or llama.cpp)")
+                with Vertical(id="config_samplers"):
+                    yield Input(placeholder="top_p", value=_blank_if_none(values.get("top_p")), id="cfg_top_p")
+                    yield Input(placeholder="min_p", value=_blank_if_none(values.get("min_p")), id="cfg_min_p")
+                    yield Input(placeholder="presence_penalty", value=_blank_if_none(values.get("presence_penalty")), id="cfg_presence_penalty")
+                    yield Input(placeholder="frequency_penalty", value=_blank_if_none(values.get("frequency_penalty")), id="cfg_frequency_penalty")
+                    yield Input(placeholder="repetition_penalty", value=_blank_if_none(values.get("repetition_penalty")), id="cfg_repetition_penalty")
+                    yield Input(placeholder="stop sequences, comma separated", value=", ".join(values.get("stop") or []), id="cfg_stop")
                 yield Label("Context window tokens (blank = from endpoint)")
                 yield Input(value=_blank_if_none(values.get("context_window")), id="cfg_context_window")
                 yield Label("When the context window fills")
@@ -287,6 +297,11 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
 
         try:
             temperature = _num("cfg_temperature", float)
+            top_p = _num("cfg_top_p", float)
+            min_p = _num("cfg_min_p", float)
+            presence_penalty = _num("cfg_presence_penalty", float)
+            frequency_penalty = _num("cfg_frequency_penalty", float)
+            repetition_penalty = _num("cfg_repetition_penalty", float)
             max_tokens = _num("cfg_max_tokens", int)
             history_percent = _num("cfg_history_percent", int)
             if history_percent is not None and not 50 <= history_percent <= 95:
@@ -316,6 +331,16 @@ class ConfigScreen(ModalScreen[Optional[dict]]):
                 "note": self.query_one("#cfg_note", TextArea).text,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "top_p": top_p,
+                "min_p": min_p,
+                "presence_penalty": presence_penalty,
+                "frequency_penalty": frequency_penalty,
+                "repetition_penalty": repetition_penalty,
+                "stop": [
+                    part.strip()
+                    for part in self.query_one("#cfg_stop", Input).value.split(",")
+                    if part.strip()
+                ],
                 "history_percent": history_percent if history_percent is not None else self.config.get("history_percent", 80),
                 "context_window": context_window,
                 "context_mode": str(self.query_one("#cfg_context_mode", Select).value),
@@ -605,6 +630,7 @@ class SekkaApp(App):
         Binding("ctrl+c", "quit_armed", "Quit (twice)", priority=True),
         Binding("ctrl+t", "toggle_thinking", "Thinking"),
         Binding("ctrl+x", "stop_generation", "Stop reply", priority=True),
+        Binding("ctrl+o", "toggle_ooc", "OOC mode"),
         Binding("escape", "clear_input", "Clear input"),
     ]
 
@@ -627,6 +653,8 @@ class SekkaApp(App):
         self.turn_alts: list[str] = []  # generated versions of the last reply, for /swipe
         self.alt_index = 0
         self._regen_pending = False
+        self.ooc_mode = False          # ctrl+o: every message until toggled off
+        self._pending_dice: list[str] = []  # /roll results awaiting the next message
         self.show_thinking = False  # ctrl+t / /thinking; always off at startup
         self._quit_arm = 0.0
         self.context_used = 0  # exact after a reply (usage), else estimate
@@ -944,7 +972,10 @@ class SekkaApp(App):
         parsed = commands.parse_input(raw)
         editor.load_text("")
         if parsed.kind == "text":
-            self._send_chat(parsed.text.strip())
+            text = parsed.text.strip()
+            if self.ooc_mode:
+                text = f"(OOC: {text})"
+            self._send_chat(text)
         else:
             self._handle_command(parsed.name, parsed.arg)
 
@@ -1021,6 +1052,10 @@ class SekkaApp(App):
         self._send_chat(text)
 
     def _send_chat(self, text: str) -> None:
+        if self._pending_dice:
+            # dice land with the action they belong to, where the model can see them
+            text = "\n".join(self._pending_dice) + "\n" + text
+            self._pending_dice = []
         if self.busy:
             self.notify("Still waiting for the current reply.", severity="warning")
             return
@@ -1191,6 +1226,12 @@ class SekkaApp(App):
                     timeout=cfg.get("request_timeout", 300),
                     tools=tools or None,
                     reasoning_effort=cfg.get("reasoning", "medium"),
+                    top_p=cfg.get("top_p"),
+                    min_p=cfg.get("min_p"),
+                    presence_penalty=cfg.get("presence_penalty"),
+                    frequency_penalty=cfg.get("frequency_penalty"),
+                    repetition_penalty=cfg.get("repetition_penalty"),
+                    stop=cfg.get("stop") or None,
                     stop_event=self._stop_event,
                 ):
                     post(ev)
@@ -1299,6 +1340,12 @@ class SekkaApp(App):
                         timeout=cfg.get("request_timeout", 300),
                         tools=tools or None,
                         reasoning_effort=cfg.get("reasoning", "medium"),
+                        top_p=cfg.get("top_p"),
+                        min_p=cfg.get("min_p"),
+                        presence_penalty=cfg.get("presence_penalty"),
+                        frequency_penalty=cfg.get("frequency_penalty"),
+                        repetition_penalty=cfg.get("repetition_penalty"),
+                        stop=cfg.get("stop") or None,
                     )
                     resp = client.StreamEvent(
                         content=r.content,
@@ -1429,6 +1476,7 @@ class SekkaApp(App):
                 "  ctrl+c    quit (press twice; copies a selection if one exists)",
                 "  ctrl+t    show/hide model thinking & tool calls",
                 "  ctrl+x    stop the reply being generated (keeps what arrived)",
+                "  ctrl+o    out-of-character mode on/off",
                 "  escape    clear the input box",
                 "(key bindings and colors are configured in the config file)",
             ]
@@ -1447,6 +1495,7 @@ class SekkaApp(App):
             self.autosave_path = None
             self.turn_alts = []
             self.alt_index = 0
+            self._pending_dice = []
             self.context_used = 0
             self.ui_lines.clear()
             self._set_notice("")
@@ -1461,6 +1510,13 @@ class SekkaApp(App):
             self.action_stop_generation()
         elif command in ("undo", "edit", "regen", "swipe"):
             self._turn_edit(command)
+        elif command == "roll":
+            self._handle_roll(arg)
+        elif command == "ooc":
+            if not arg:
+                self._sys("Say something out of character: /ooc <text>", error=True)
+                return
+            self._send_chat(f"(OOC: {arg})")
         elif command == "note":
             self._handle_note(arg)
         elif command == "campaign":
@@ -1482,6 +1538,7 @@ class SekkaApp(App):
                 self.chat.pop()
         self.turn_alts = []
         self.alt_index = 0
+        self._pending_dice = []
         return True
 
     def _turn_edit(self, command: str) -> None:
@@ -1535,6 +1592,23 @@ class SekkaApp(App):
             self.full_chat[-1]["content"] = text
             self._rebuild_history()
             self._set_notice(f"reply {self.alt_index + 1} of {len(self.turn_alts)}")
+
+    def _handle_roll(self, arg: str) -> None:
+        """Real dice, shown to the player and folded into the next message."""
+        try:
+            result = dice.roll(arg)
+        except dice.DiceError as exc:
+            self._sys(str(exc), error=True)
+            return
+        self._append(f"dice: {result.detail}", "stats")
+        self._pending_dice.append(f"[dice] {result.detail}")
+        self.notify(result.detail, timeout=4.0)
+
+    def action_toggle_ooc(self) -> None:
+        """ctrl+o: everything you type from here on is out of character."""
+        self.ooc_mode = not self.ooc_mode
+        self._set_notice("OOC mode on (ctrl+o to switch back)" if self.ooc_mode else "")
+        self.notify("OOC mode on" if self.ooc_mode else "OOC mode off", timeout=2.0)
 
     def _handle_note(self, arg: str) -> None:
         """/note - the pinned block that survives compaction and long scenes.

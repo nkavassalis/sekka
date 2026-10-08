@@ -351,3 +351,19 @@ def test_knowledge_keyword_validation(clean_env):
     values["knowledge"] = [{"file": "a.md", "description": "", "enabled": True,
                            "keywords": ["tavern"], "always": False}]
     validate_config(values)   # optional fields accepted
+
+
+def test_sampler_validation():
+    def base(**over):
+        values = copy.deepcopy(DEFAULT_CONFIG)
+        values.update(over)
+        return values
+
+    validate_config(base(top_p=0.9, min_p=0.0, stop=["\n\nPlayer:"]))   # ok
+    for bad in (
+        {"top_p": 1.5}, {"top_p": "hot"}, {"min_p": -0.1}, {"presence_penalty": 3},
+        {"frequency_penalty": True}, {"repetition_penalty": -1},
+        {"stop": "Player:"}, {"stop": [""]}, {"stop": ["a"] * 9}, {"stop": [7]},
+    ):
+        with pytest.raises(ConfigError):
+            validate_config(base(**bad))
