@@ -158,3 +158,184 @@ def test_reasoning_none_is_not_sent(captured):
     assert "reasoning_effort" not in captured["post"]["json"]
     chat_completion("http://h/v1", "m", [], reasoning_effort="high")
     assert captured["post"]["json"]["reasoning_effort"] == "high"
+
+
+# --------------------------------------------------------------- streaming SSE
+# A real SSE endpoint speaks HTTP/1.1 + Transfer-Encoding: chunked. That detail
+# matters: http.server buffers writes, and an HTTP/1.0 body without
+# Content-Length makes urllib3 read the whole thing, so a fake server that is
+# not chunked cannot prove incremental delivery (both hid a bug first).
+
+import socket
+import threading
+import json as _json
+import time as _time
+
+
+def _chunk(payload: bytes) -> bytes:
+    return f"{len(payload):X}\r\n".encode() + payload + b"\r\n"
+
+
+class SSEServer:
+    """Minimal chunked SSE server. events: list of dicts; '__DONE__' sentinel optional."""
+
+    def __init__(self, events, delay=0.0, stall=0.0, raw_body=None):
+        self.events = events
+        self.delay = delay
+        self.stall = stall
+        self.raw_body = raw_body  # if set: reply with plain JSON (ignores stream)
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self):
+        return f"http://127.0.0.1:{self.port}/v1"
+
+    def _serve(self):
+        try:
+            conn, _ = self.sock.accept()
+        except OSError:
+            return
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.recv(65536)  # request body (ignored)
+        if self.raw_body is not None:
+            body = self.raw_body.encode()
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                + f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+            )
+            conn.close()
+            return
+        conn.sendall(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n"
+            b"Transfer-Encoding: chunked\r\n\r\n"
+        )
+        try:
+            for ev in self.events:
+                conn.sendall(_chunk(b"data: " + _json.dumps(ev).encode() + b"\n\n"))
+                if self.delay:
+                    _time.sleep(self.delay)
+            if self.stall:
+                _time.sleep(self.stall)  # endpoint goes quiet mid-reply
+            conn.sendall(_chunk(b"data: [DONE]\n\n"))
+            conn.sendall(b"0\r\n\r\n")
+        except OSError:
+            pass  # client aborted
+        finally:
+            conn.close()
+
+    def stop(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def delta(content=None, reasoning=None, tool_calls=None):
+    d = {}
+    if content is not None:
+        d["content"] = content
+    if reasoning is not None:
+        d["reasoning_content"] = reasoning
+    if tool_calls is not None:
+        d["tool_calls"] = tool_calls
+    return {"choices": [{"delta": d}]}
+
+
+def test_stream_yields_tokens_incrementally_and_folds_usage():
+    srv = SSEServer(
+        [
+            delta(reasoning="th"), delta(reasoning="ink"),
+            delta("Hel"), delta("lo wor"), delta("ld"), delta(" [OOC]"),
+            {"usage": {"prompt_tokens": 11, "completion_tokens": 7}, "choices": []},
+        ],
+        delay=0.15,
+    )
+    seen = []
+    t0 = _time.monotonic()
+    try:
+        for ev in client.stream_chat_completion(srv.url, "m", [{"role": "user", "content": "x"}]):
+            if ev.content and not ev.message:
+                seen.append((_time.monotonic() - t0, ev.content))
+        final = ev
+    finally:
+        srv.stop()
+    assert final.content == "Hello world [OOC]"          # concatenated verbatim
+    assert final.reasoning == "think"
+    assert (final.prompt_tokens, final.completion_tokens) == (11, 7)
+    assert final.message["role"] == "assistant" and not final.stopped
+    assert [t for t, _ in seen] == sorted(t for t, _ in seen)
+    assert seen[0][0] < 0.4, f"first token arrived too late, looks buffered: {seen[0][0]:.2f}s"
+    assert seen[0][1] == "Hel"                            # partial text, not the whole reply
+
+
+def test_stream_merges_tool_call_fragments():
+    srv = SSEServer([
+        delta(tool_calls=[{"index": 0, "id": "c1", "function": {"name": "read_lo"}}]),
+        delta(tool_calls=[{"index": 0, "function": {"name": "re"}}]),
+        delta(tool_calls=[{"index": 0, "function": {"arguments": '{"a"'}}]),
+        delta(tool_calls=[{"index": 0, "function": {"arguments": ':1}'}}]),
+    ])
+    try:
+        ev = list(client.stream_chat_completion(
+            srv.url, "m", [{"role": "user", "content": "x"}]))[-1]
+    finally:
+        srv.stop()
+    assert ev.tool_calls == [{"id": "c1", "type": "function",
+                              "function": {"name": "read_lore", "arguments": '{"a":1}'}}]
+    assert ev.message["tool_calls"] == ev.tool_calls
+    assert ev.message["content"] is None                  # tool call only
+
+
+def test_stream_stop_keeps_partial_output():
+    srv = SSEServer([delta("Hel"), delta("lo wor"), delta("ld")], delay=0.25)
+    stop = threading.Event()
+
+    def abort():
+        _time.sleep(0.4)  # let ~2 chunks land, then press stop mid-reply
+        stop.set()
+
+    threading.Thread(target=abort, daemon=True).start()
+    try:
+        ev = list(client.stream_chat_completion(
+            srv.url, "m", [{"role": "user", "content": "x"}], stop_event=stop))[-1]
+    finally:
+        srv.stop()
+    assert ev.stopped is True
+    assert ev.content and len(ev.content) < len("Hello world")
+
+
+def test_stalled_stream_stops_at_the_ui_not_the_socket():
+    """A quiet endpoint has no chunks to poll; the app-level stop is what frees the UI."""
+    srv = SSEServer([delta("Hel")], stall=2.0)
+    stop = threading.Event()
+
+    def abort():
+        _time.sleep(0.3)
+        stop.set()
+
+    threading.Thread(target=abort, daemon=True).start()
+    try:
+        ev = list(client.stream_chat_completion(
+            srv.url, "m", [{"role": "user", "content": "x"}], stop_event=stop))[-1]
+    finally:
+        srv.stop()
+    # the client itself only notices the stop when the stream resumes or dies
+    assert ev.stopped is True and ev.content == "Hel"
+
+
+def test_stream_falls_back_when_endpoint_ignores_stream():
+    body = _json.dumps({"choices": [{"message": {"role": "assistant", "content": "plain fallback"}}],
+                        "usage": {"prompt_tokens": 5, "completion_tokens": 2}})
+    srv = SSEServer([], raw_body=body)
+    try:
+        events = list(client.stream_chat_completion(srv.url, "m", [{"role": "user", "content": "x"}]))
+    finally:
+        srv.stop()
+    assert len(events) == 1
+    assert events[0].content == "plain fallback"
+    assert events[0].completion_tokens == 2

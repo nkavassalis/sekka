@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["pause", "rolling", "compact"],
         help="what happens when the context window fills",
     )
+    parser.add_argument(
+        "--stream",
+        action=argparse.BooleanOptionalAction,
+        help="show replies token by token (--stream / --no-stream)",
+    )
     parser.add_argument("--save-dir", help="where /save and autosave write files")
     parser.add_argument(
         "--save-format", choices=["json", "markdown"], help="saved file format"
@@ -84,6 +89,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "max_tokens": args.max_tokens,
         "request_timeout": args.timeout,
         "reasoning": args.reasoning,
+        "stream": args.stream,
         "history_percent": args.history_percent,
         "context_window": args.context_window,
         "context_mode": args.context_mode,

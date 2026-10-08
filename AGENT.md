@@ -144,6 +144,31 @@ so `SEKKA_API_KEY`/`--api-key` can never be silently persisted by /config or a
 is called for changed keys only. Don't simplify this back to writing
 `config.values`.
 
+- **Streaming is the default** (`stream: true`, `--stream/--no-stream`).
+  `client.stream_chat_completion()` yields cumulative-progress `StreamEvent`s;
+  the TUI mounts the assistant `Static` on the first token (which also kills the
+  snowflake spinner) and `.update()`s it. Points not to undo:
+  - The generator runs in a thread (`asyncio.to_thread`) feeding an
+    `asyncio.Queue` through `call_soon_threadsafe`; only the UI thread touches
+    widgets.
+  - `StreamEvent.message` is set only on the closing event — that is how
+    `_stream_round` tells progress from final.
+  - Endpoints that ignore `stream=true` are handled by content-type sniffing
+    (parsed as one plain completion), so the default is safe on old servers.
+  - **Stopping** (`ctrl+x` / `/stop`, `self._stop_event`): mid-stream stops are
+    clean (polled per chunk, connection closed, partial kept, flagged `stopped`,
+    saved as the assistant turn with ` …[stopped]`). A stream that has gone
+    *quiet* cannot be interrupted portably — a blocked socket read survives
+    `resp.close()` from another thread — so `_stream_round` gives up after a
+    0.25 s queue timeout and frees the UI; the abandoned request may keep running
+    server-side. Stated to users in docs/configuration.md.
+  - The streamed line enters `ui_lines` only at round end, with the final
+    stripped text, so the log never holds half a reply.
+  - `/compact`'s summary call stays non-streaming.
+- **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
+  output only when you were already at the bottom, so scrolling up to reread
+  sticks. Don't restore the unconditional `scroll_end`.
+
 ## Testing limitations / unverified
 
 - The bug fixes above were exercised against a **local stub OpenAI-compatible
@@ -157,13 +182,22 @@ is called for changed keys only. Don't simplify this back to writing
   observed on a real template.
 - Markdown/markup fix is verified for rendering; **no markdown styling** is
   applied (replies are intentionally plain text).
+- **SSE tests need a chunked HTTP/1.1 fake server** (`SSEServer`,
+  `tests/test_client.py`). Two traps, both hit for real: `http.server` buffers
+  writes so nothing looks incremental, and an HTTP/1.0 body with no
+  `Content-Length` makes urllib3 read the entire response before yielding one
+  line (which made `iter_lines()` look broken when it was not). Real endpoints
+  (vLLM, llama.cpp, Ollama) send `Transfer-Encoding: chunked`.
+- Streaming was verified against that fake SSE server and the real TUI, not
+  against vLLM/llama.cpp/Ollama. Check `prompt_tokens` usage and
+  `reasoning_content` deltas on a real thinking model.
 
 ## Ops quick facts
 
 - Dev endpoint URL/model and local overrides go in `.sekka/config.json`
   (auto-discovered, gitignored). See `LOCAL.md`.
-- Tests: `python3 -m pytest tests/ -q` (Textual Pilot; ~115 tests, all should
-  pass in ~25 s). `conftest.py` keeps tests off the real config/network.
+- Tests: `python3 -m pytest tests/ -q` (Textual Pilot; ~130 tests, all should
+  pass in ~55 s - the SSE tests sleep deliberately). `conftest.py` keeps tests off the real config/network.
 - Tests must not name real internal services: one captive-portal test used to
   embed a real dashboard name; use generic stand-ins.
 - A working tree once mysteriously lost files; recovery was via

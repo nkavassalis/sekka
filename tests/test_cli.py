@@ -46,6 +46,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "--history-percent", "70",
         "--context-window", "16384",
         "--context-mode", "rolling",
+        "--stream",
         "--save-dir", "/tmp/saves",
         "--save-format", "markdown",
         "--autosave",
@@ -62,6 +63,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "history_percent": 70,
         "context_window": 16384,
         "context_mode": "rolling",
+        "stream": True,
         "save_dir": "/tmp/saves",
         "save_format": "markdown",
         "autosave": True,
@@ -117,3 +119,8 @@ def test_all_scalar_config_keys_have_a_flag(monkeypatch):
     scalars = set(DEFAULT_CONFIG) - structured
     # the overrides dict must cover every scalar config key exactly
     assert set(box["overrides"]) == scalars
+
+
+def test_no_stream_flag_reaches_config(monkeypatch):
+    box = captured_main(monkeypatch, ["--no-stream"])
+    assert box["overrides"]["stream"] is False

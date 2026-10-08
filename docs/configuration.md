@@ -34,6 +34,7 @@ built-in default**.
      "description": "Full policy for credit card processing at the clinic",
      "enabled": true}
   ],
+  "stream": true,
   "autosave": false,
   "save_dir": ".",
   "save_format": "json",
@@ -110,6 +111,15 @@ location lore for RPGs - anything the model should be able to look up.
   (UTF-8, max 256 KB) and feeds the contents back as the tool result.
   Unknown/hallucinated tool names are refused without touching the disk.
 
+### Streaming (`--stream` / `--no-stream`, `stream`)
+
+Replies stream into the view token by token (default on). Endpoints that
+ignore `stream=true` are handled: sekka falls back to showing the whole reply
+at once. **`ctrl+x`** (or `/stop`) aborts a reply in flight and keeps the text
+that already arrived, marked `[stopped]`; it also frees the editor immediately
+when the endpoint has gone quiet, though an abandoned request may still be
+finishing server-side. Streaming is skipped for the `/compact` summary call.
+
 ### Thinking & tool calls (`/thinking`, `ctrl+t`)
 
 Reasoning content (`reasoning_content`/`reasoning` in the API response) and
@@ -138,6 +148,7 @@ according to `context_mode`:
 | `labels.assistant`| string          | `"Assistant"`                 | Name shown before replies (also editable in `/config`) |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |
 | `save_format`     | `json`/`markdown` | `json`                      | `.json` or `.md` output                            |
+| `stream`          | bool            | `true`                        | Stream replies into the view; `--no-stream` shows them whole |
 | `autosave`        | bool            | `false`                       | Update one session file after every reply (first write picks the timestamped name; manual `/save` still asks first) |
 
 ### `theme`
