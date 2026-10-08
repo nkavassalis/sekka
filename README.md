@@ -27,7 +27,7 @@ bots, and role playing games.
 - Everything configurable via CLI flags, environment, or a JSON config file
 - `/config` — in-app configuration screen (endpoint, model, system prompt, ...)
 - `/save` — save the chat history to a timestamped file (asks first)
-- Optional autosave after every reply (off by default)
+- Optional autosave after every reply, updating one session file (off by default)
 - Configurable message colors and key bindings
 - Dark bracketed timing line after each reply: `[1.4s, 38.2 tok/s]`
 - Sessions: `/save` writes a resumable JSON file, and `sekka -r session.json`
@@ -56,9 +56,9 @@ zero speedup and are deliberately not shipped.
 ## Quick start
 
 ```bash
-sekka --endpoint http://10.1.13.99:8000/v1
+sekka --endpoint http://your-llm-server:8000/v1
 # or pick a model directly:
-sekka --endpoint http://10.1.13.99:8000/v1 --model qwen3.8-flash-next
+sekka --endpoint http://your-llm-server:8000/v1 --model your-model-id
 ```
 
 Then just type and press **enter**. `/help` lists the in-chat commands.
@@ -92,7 +92,8 @@ Every simple config key has a matching flag; the structured keys
 `/config`/`/knowledge` screens only.
 
 Environment variables (overridden by CLI flags):
-`SEKKA_ENDPOINT`, `SEKKA_MODEL`, `SEKKA_API_KEY`, `SEKKA_CONFIG`.
+`SEKKA_ENDPOINT`, `SEKKA_MODEL`, `SEKKA_API_KEY`, `SEKKA_CONFIG`. A key given by
+flag or env var is used for the session but never written to your config file.
 
 Configuration precedence: **CLI flags > environment > config file > defaults**.
 

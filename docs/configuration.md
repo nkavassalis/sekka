@@ -18,8 +18,8 @@ built-in default**.
 
 ```json
 {
-  "endpoint": "http://10.1.13.99:8000/v1",
-  "model": "qwen3.8-flash-next",
+  "endpoint": "http://your-llm-server:8000/v1",
+  "model": "your-model-id",
   "api_key": "",
   "system_prompt": "You are a helpful assistant.",
   "temperature": 0.7,
@@ -138,7 +138,7 @@ according to `context_mode`:
 | `labels.assistant`| string          | `"Assistant"`                 | Name shown before replies (also editable in `/config`) |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |
 | `save_format`     | `json`/`markdown` | `json`                      | `.json` or `.md` output                            |
-| `autosave`        | bool            | `false`                       | Write a timestamped file after every reply (still keeps confirm-before-write for manual `/save`) |
+| `autosave`        | bool            | `false`                       | Update one session file after every reply (first write picks the timestamped name; manual `/save` still asks first) |
 
 ### `theme`
 
@@ -170,7 +170,12 @@ older terminals it may arrive as a plain enter.
 
 ## Saved files
 
-`/save` (and autosave) write timestamped files; JSON saves are also sessions:
+`/save` (and autosave) write timestamped files; JSON saves are also sessions.
+
+Secrets: a key supplied via `--api-key` or `SEKKA_API_KEY` is used for the
+session but **not** written to the config file by `/config` or `/knowledge`
+(the file keeps whatever it already had). Typing a key into `/config` does
+persist it, so only do that where the file is readable.
 `sekka -r FILE` resumes one, and bare `sekka -r` lists the JSON files in the
 current `save_dir` newest-first. Resume files are treated as **untrusted
 input**: size-capped read, strict JSON, message/role/content type and size

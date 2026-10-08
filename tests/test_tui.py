@@ -387,9 +387,10 @@ def test_compact_mode_summarizes_old_messages():
                 await run_typing(pilot, "continue our chat")
                 await pilot.press("enter")
                 await wait_for(pilot, lambda: app.chat and app.chat[-1]["content"] == "post-compact reply")
-                assert app.chat[0]["role"] == "system"
-                assert app.chat[0]["content"].startswith("[Summary of earlier conversation]")
-                assert "They talked about weather." in app.chat[0]["content"]
+                # summary lives in the system prompt, never mid-chat
+                assert all(m["role"] != "system" for m in app.chat)
+                assert app.chat[0]["role"] == "user"
+                assert "They talked about weather." in app._system_text()
                 assert "compacted" in app.notice_text
                 assert "compacted" not in history_text(app)
         finally:
@@ -751,4 +752,133 @@ def test_model_screen_handles_weird_model_ids():
                 assert app.context_total == 8192
         finally:
             client.list_models = old
+    asyncio.run(go())
+
+
+# ---------------------------------------------------------------- review fixes
+
+
+def _fake(content="ok", **kw):
+    def fake_chat(endpoint, model, messages, **k):
+        fake_chat.calls.append(messages)
+        return ChatResponse(content=content, completion_tokens=5, elapsed=0.1, **kw)
+    fake_chat.calls = []
+    return fake_chat
+
+
+def test_brackets_in_text_do_not_crash_or_get_styled():
+    async def go():
+        old = client.chat_completion
+        client.chat_completion = _fake("*grins* [OOC: roll d20] [/b] [bold]door")
+        try:
+            app = SekkaApp(make_config(model="m"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hi [/i] there")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: len(app.chat) == 2)
+                await pilot.pause()
+                text = "\n".join(str(w.render()) for w in app.query("Static.msg-assistant"))
+                assert "[OOC: roll d20] [/b] [bold]door" in text
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_api_error_removes_user_turn_from_saved_history_too():
+    async def go():
+        def boom(*a, **k):
+            raise client.ClientError("down")
+        old = client.chat_completion
+        client.chat_completion = boom
+        try:
+            app = SekkaApp(make_config(model="m"))
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "hello")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and any(r == "error" for r, _ in app.ui_lines))
+                assert app.chat == [] and app.full_chat == []
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_autosave_reuses_one_file(tmp_path):
+    async def go():
+        old = client.chat_completion
+        client.chat_completion = _fake("reply")
+        try:
+            app = SekkaApp(make_config(model="m", autosave=True, save_dir=str(tmp_path)))
+            async with app.run_test(size=(90, 30)) as pilot:
+                for word in ("one", "two", "three"):
+                    await run_typing(pilot, word)
+                    await pilot.press("enter")
+                    await wait_for(pilot, lambda w=word: not app.busy and app.chat and app.chat[-2]["content"] == w)
+                files = list(tmp_path.glob("sekka_*.json"))
+                assert len(files) == 1
+                assert len(json.loads(files[0].read_text())["messages"]) == 6
+        finally:
+            client.chat_completion = old
+    asyncio.run(go())
+
+
+def test_rolling_never_starts_context_with_assistant():
+    app = SekkaApp(make_config(model="m"))
+    for i in range(6):
+        app.chat.append({"role": "user", "content": "u" * 400})
+        app.chat.append({"role": "assistant", "content": "a" * 400})
+    app._roll_context(need=10_000, limit=500)
+    assert app.chat[0]["role"] == "user"
+
+
+def test_resume_folds_system_notes_into_system_prompt(tmp_path):
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps({"messages": [
+        {"role": "system", "content": "[Summary of earlier conversation]\nthe party met a dragon"},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "yo"},
+    ]}))
+    async def go():
+        app = SekkaApp(make_config(model="m"), resume=str(f))
+        async with app.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert all(m["role"] != "system" for m in app.chat)
+            assert "the party met a dragon" in app._system_text()
+            assert len(app.full_chat) == 3
+    asyncio.run(go())
+
+
+def test_knowledge_read_once_then_kept_in_system_context(tmp_path):
+    lore = tmp_path / "ünï-lore.md"
+    lore.write_text("DRAGONS ARE BLUE")
+    async def go():
+        calls = []
+        def fake_chat(endpoint, model, messages, **k):
+            calls.append((messages, k.get("tools")))
+            if len(calls) == 1:
+                msg = {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "1", "type": "function", "function": {"name": k["tools"][0]["function"]["name"], "arguments": "{}"}}]}
+                return ChatResponse(content="", tool_calls=msg["tool_calls"], message=msg, elapsed=0.1)
+            return ChatResponse(content="answer", completion_tokens=3, elapsed=0.1)
+        old = client.chat_completion
+        client.chat_completion = fake_chat
+        try:
+            cfg = make_config(model="m", knowledge=[{"file": str(lore), "description": "d", "enabled": True}])
+            app = SekkaApp(cfg)
+            async with app.run_test(size=(90, 30)) as pilot:
+                import re as _re
+                await run_typing(pilot, "one")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 2)
+                name = calls[0][1][0]["function"]["name"]
+                assert _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name)
+                n = len(calls)
+                await run_typing(pilot, "two")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy and len(app.chat) == 4)
+                assert len(calls) == n + 1          # no second tool round trip
+                msgs, tools = calls[-1]
+                assert not tools                     # already loaded, not offered again
+                assert "DRAGONS ARE BLUE" in msgs[0]["content"]
+        finally:
+            client.chat_completion = old
     asyncio.run(go())

@@ -175,6 +175,7 @@ def test_deep_merge_is_not_destructive():
 
 def test_save_and_reload_roundtrip(clean_env):
     cfg = load_config({"model": "roundtrip"})
+    cfg.release_override("model")  # as if the user chose it in the UI
     written = save_config(cfg)
     assert written == Path.cwd() / ".sekka" / "config.json"
     assert written.is_file()
@@ -189,3 +190,28 @@ def test_save_config_uses_existing_path(clean_env):
     written = save_config(cfg)
     assert written == path
     assert json.loads(path.read_text())["model"] == "m"
+
+
+def test_cli_and_env_overrides_are_not_persisted(clean_env, monkeypatch):
+    path = clean_env / "c.json"
+    make_config_file(path, {"model": "from-file"})
+    monkeypatch.setenv("SEKKA_API_KEY", "sk-secret-from-env")
+    cfg = load_config({"endpoint": "http://cli/v1"}, config_path=str(path))
+    assert cfg["api_key"] == "sk-secret-from-env"
+    save_config(cfg)
+    saved = json.loads(path.read_text())
+    assert "api_key" not in saved or saved["api_key"] == ""
+    # 'endpoint' came only from the CLI and was never in the file: not written
+    assert "endpoint" not in saved
+    assert saved["model"] == "from-file"
+
+
+def test_released_override_is_persisted(clean_env, monkeypatch):
+    path = clean_env / "c.json"
+    make_config_file(path, {})
+    monkeypatch.setenv("SEKKA_API_KEY", "sk-env")
+    cfg = load_config(config_path=str(path))
+    cfg["api_key"] = "typed-by-user"
+    cfg.release_override("api_key")
+    save_config(cfg)
+    assert json.loads(path.read_text())["api_key"] == "typed-by-user"

@@ -116,7 +116,7 @@ def test_chat_completion_invalid_json(captured):
 
 def test_html_response_gives_clear_error(captured):
     captured["respond"] = lambda: FakeResponse(
-        200, None, text="<html>sparkDash</html>",
+        200, None, text="<html>captive-portal</html>",
         headers={"Content-Type": "text/html; charset=utf-8"},
     )
     with pytest.raises(ClientError, match="HTML page, not JSON"):
