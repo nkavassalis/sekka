@@ -33,10 +33,32 @@
       The weight range is declared so bold text still synthesises from this family.
     -->
     <style>
+      /*
+        Roboto Mono, self-hosted from the TTFs textual-serve already ships at
+        /static/fonts/. textual.js hardcodes `fontFamily: "'Roboto Mono', Monaco,
+        'Courier New', monospace"`, so without a @font-face rule the terminal
+        silently falls back to whatever monospace the browser has - a lighter, thinner
+        face that makes the whole UI read as faint next to a real terminal. Upstream
+        pulled this font from fonts.googleapis.com, which a local tool must not do.
+
+        Two rules, same family. xterm renders body text at font-weight 400 and asks
+        for it by that name, so the first rule pins the variable instance at 550:
+        same typeface, strokes about as fat as a terminal's, and the page never looks
+        washed out. Bold (700) matches the second rule and gets the real bold
+        instance, so emphasis is still emphasised.
+      */
       @font-face {
         font-family: "Roboto Mono";
         font-style: normal;
-        font-weight: 100 900;
+        font-weight: 100 450;
+        font-variation-settings: "wght" 550;
+        src: url("static/fonts/RobotoMono-VariableFont_wght.ttf") format("truetype-variations");
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Roboto Mono";
+        font-style: normal;
+        font-weight: 451 900;
         src: url("static/fonts/RobotoMono-VariableFont_wght.ttf") format("truetype-variations");
         font-display: block;
       }
@@ -221,6 +243,25 @@
           "://" +
           location.host +
           new URL(name, location.href).pathname;
+      })();
+    </script>
+    <script>
+      /* Optional brightness dial: open the page with ?bright=1.2 and the terminal is
+         rendered that much brighter, for a player whose monitor/terminal pairing runs
+         dim and who does not want to edit the theme. Off by default, because a filter
+         lifts the background along with the ink (measured on the /help screen:
+         glyph-core luminance 205 -> 230 while the background goes 19 -> 24, i.e. the
+         blacks get slightly washed). Clamped and digit-only, so the value cannot be
+         used to inject CSS. */
+      (function () {
+        var wanted = new URLSearchParams(location.search).get("bright");
+        if (wanted === null) return;
+        var factor = Math.min(2, Math.max(0.5, parseFloat(wanted) || 1));
+        var saturate = Math.min(2, Math.max(0.5, 1 + (factor - 1) * 0.4));
+        var style = document.createElement("style");
+        style.textContent = ".textual-terminal canvas{filter:brightness(" +
+          factor.toFixed(3) + ") saturate(" + saturate.toFixed(3) + ");}";
+        document.head.appendChild(style);
       })();
     </script>
   </body>

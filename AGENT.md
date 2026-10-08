@@ -329,6 +329,32 @@ is called for changed keys only. Don't simplify this back to writing
   channel falls under 160. Measured mean ink luminance on the boot screen: 102 -> 166.
   Note a user's own config file wins over these defaults (sekka's merge is per-key), so
   an existing `theme` block keeps the old colors until edited.
+- **Brightness: sekka registers its own Textual theme (`SEKKA_THEME` in tui.py), do
+  not fall back to `textual-dark`.** That theme is written for a *terminal palette*:
+  text at 87% luminance, `text_alpha=0.95`, foreground `#E0E0E0`, borders
+  `primary=#0178D4` (luminance ~101). A terminal hides this by substituting its own
+  palette for the ANSI slots; a browser (textual-serve runs in truecolor) paints those
+  numbers literally, which is what "the web UI looks faint" meant. The registered
+  theme asks for `#ffffff` text, `text_alpha=1.0`, `text: auto 100%`,
+  `primary=#00afff`, `secondary=#5f87d7`. Registered in `on_mount`, so any test that
+  asserts on colors must run after mount.
+- **Measuring "faint" needs composited pixels.** `canvas.getImageData()` reads the
+  backing store: it cannot see a CSS `filter`, and it averages over ~99% background,
+  so it measures stroke coverage rather than colour. Screenshot the page, decode it
+  through `createImageBitmap`/`drawImage`, then look at the luminance of glyph cores
+  (`l > 170`) and the ink fraction. Reference numbers on the `/help` screen: before
+  any of this, ink 0.671%, core luma ~204; after the theme + heavier face, ink
+  0.723%, core luma 205, background unchanged at 19 - and `?bright=1.2` buys core
+  luma 230 at the cost of a background that lifts 19 -> 24, which is why the filter
+  is opt-in per URL and not the default.
+- **The served face is Roboto Mono pinned at weight 550, in two @font-face rules.**
+  textual.js asks xterm for weight 400 of `'Roboto Mono'`; the shipped variable TTF
+  at its 400 instance is thinner than any terminal's rendering of the same face, and
+  thin strokes are read as "faint" even when the colour is white. The first rule
+  covers `font-weight: 100 450` and sets `font-variation-settings: "wght" 550`; the
+  second covers `451 900` with no override so `bold` still resolves to a real bold
+  instance instead of a flattened one. Measured effect: ink coverage 0.671% -> 0.730%
+  at unchanged colour.
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.
@@ -416,7 +442,7 @@ but nothing here actually ran one).
 
 - Dev endpoint URL/model and local overrides go in `.sekka/config.json`
   (auto-discovered, gitignored). See `LOCAL.md`.
-- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 251 tests, all
+- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 253 tests, all
   should pass in ~120 s - the SSE tests sleep deliberately). `conftest.py` keeps
   tests off the real config/network. The fresh venv needs `pip install -e '.[dev]'`
   **and** `pip install 'textual-serve>=1.1'`: without the serve extra,

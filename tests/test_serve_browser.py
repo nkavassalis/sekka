@@ -14,6 +14,7 @@ extra, Playwright or Chromium is missing.
 from __future__ import annotations
 
 import http.client
+from urllib.parse import quote
 import json
 import socket
 import subprocess
@@ -226,7 +227,7 @@ def test_served_screen_uses_the_intended_font_and_a_bright_palette(served, brows
     TTF but upstream only ever referenced it from a CDN stylesheet, which sekka does
     not load, so the @font-face rules in the template are what keep the terminal on
     that face instead of a thinner fallback. The luma floor is the other half: the
-    pre-2026-10 default theme measured ~102 on this same screen.
+    pre-2026-10 default theme measured ~102 on this same screen, ~172 after.
     """
     page = browser.new_page(viewport={"width": 1100, "height": 650})
     try:
@@ -234,7 +235,35 @@ def test_served_screen_uses_the_intended_font_and_a_bright_palette(served, brows
         page.wait_for_timeout(2500)
         state = page_state(page)
         assert state["roboto"], "terminal fell back to a substitute monospace face"
-        assert state["meanInkLuma"] > 130, f"rendering is faint: {state}"
+        assert state["meanInkLuma"] > 150, f"rendering is faint: {state}"
         assert state["inkFraction"] > 0.003, f"almost nothing drawn: {state}"
+    finally:
+        page.close()
+
+
+def test_bright_query_param_applies_a_filter(served, browser):
+    """`?bright=1.5` is the dial for a player whose screen runs dim, no restart."""
+    page = browser.new_page(viewport={"width": 1100, "height": 650})
+    try:
+        first_page(page, served + "/?bright=1.5")
+        page.wait_for_timeout(1000)
+        css = page.evaluate("""() => [...document.querySelectorAll('style')]
+            .map(s => s.textContent).join('\\n')""")
+        assert "filter:brightness(1.500)" in css
+        assert "saturate(1.200)" in css          # saturation trails brightness, gently
+    finally:
+        page.close()
+
+
+def test_bright_query_param_is_clamped(served, browser):
+    """A silly value must not make the screen unreadable, or inject CSS."""
+    page = browser.new_page(viewport={"width": 1100, "height": 650})
+    try:
+        first_page(page, served + "/?bright=99")
+        page.wait_for_timeout(1000)
+        css = page.evaluate("""() => [...document.querySelectorAll('style')]
+            .map(s => s.textContent).join('\\n')""")
+        assert "filter:brightness(2.000)" in css      # clamped to 2, not 99
+        assert "background:url" not in css
     finally:
         page.close()

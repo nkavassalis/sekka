@@ -55,10 +55,10 @@ Precedence of a single value: **CLI flag > environment variable > campaign file
   "labels": {"user": "You", "assistant": "Assistant"},
   "theme": {
     "user": "bright_cyan",
-    "assistant": "violet",
+    "assistant": "#d7afff",
     "system": "gold1",
-    "stats": "grey66",
-    "error": "bright_red"
+    "stats": "grey84",
+    "error": "#ff5f5f"
   },
   "keys": {
     "submit": "enter",
@@ -386,7 +386,7 @@ according to `context_mode`:
 ### `theme`
 
 Colors accept anything [rich](https://rich.readthedocs.io/) understands:
-`"bright_cyan"`, `"violet"`, `"grey66"`, `"bright_green"`, `"#ff8800"`, ...
+`"bright_cyan"`, `"gold1"`, `"grey84"`, `"bright_green"`, `"#ff8800"`, ...
 
 - `user` — your messages
 - `assistant` — model replies
@@ -401,6 +401,20 @@ In a terminal you rarely notice, because the terminal substitutes its own palett
 for those slots and most palettes brighten them; a browser (and any truecolor
 rendering) paints the literal value, and the whole UI reads faint. That is why the
 defaults name the bright variants outright.
+
+The rest of the screen - text, borders, panel fills - is not in this file. sekka
+registers its own Textual theme (`sekka`) instead of inheriting `textual-dark`,
+whose defaults are built for a terminal palette: text at 87% luminance behind a
+0.95 alpha, foreground `#E0E0E0`, borders `#0178D4`. Sekka asks for white text,
+no alpha loss, and `#00afff` borders in both media. To change those, edit
+`SEKKA_THEME` in `sekka/tui.py`.
+
+**In the browser only:** the served page also carries two dials that need no
+restart. Open it with `?fontsize=20` (textual-serve's own parameter), or
+`?bright=1.2` to render the terminal that much brighter. The brightness dial is a
+CSS filter, so it lifts the background along with the ink - measured on the `/help`
+screen, glyph-core luminance goes 205 -> 230 while the background goes 19 -> 24.
+Try it before editing the palette. Values are clamped to 0.5-2.
 
 Invalid colors are rejected at startup with a clear message.
 

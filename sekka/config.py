@@ -58,10 +58,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "campaign": "",
     "theme": {
         "user": "bright_cyan",
-        "assistant": "violet",
+        "assistant": "#d7afff",
         "system": "gold1",
-        "stats": "grey66",
-        "error": "bright_red",
+        "stats": "grey84",
+        "error": "#ff5f5f",
     },
     "keys": {
         "submit": "enter",

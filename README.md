@@ -195,7 +195,11 @@ written when it refuses).
 The browser paints your `theme` colors literally, so the defaults name bright
 colors (`bright_cyan`, `gold1`, ...): the plain ANSI names are the dark half of the
 set - `cyan` is `#008080`, `red` is `#800000` - and a terminal only looks brighter
-because your emulator substitutes its own palette for those slots.
+because your emulator substitutes its own palette for those slots. The chrome
+(text, borders, panels) comes from sekka's own Textual theme for the same reason:
+Textual's default is tuned for a terminal palette, at 87% text luminance behind a
+0.95 alpha. If a particular monitor still runs dim, open the page with
+`?bright=1.2` - no restart, no config edit.
 
 **Whichever address you open the page on, the terminal follows.** The page opens
 its terminal socket back to its own origin rather than to whatever address the

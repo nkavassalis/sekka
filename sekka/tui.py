@@ -23,6 +23,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.theme import Theme
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DirectoryTree, Input, Label, ListItem, ListView, Select, Static, TextArea
@@ -44,6 +45,31 @@ from .stats import estimate_tokens, format_stats, format_tokens
 def _hex(color: str) -> str:
     """Convert any rich-recognised color name to a hex string for Textual CSS."""
     return Color.parse(color).get_truecolor().hex
+
+
+# Textual's own `textual-dark` is built for a *terminal palette*: text sits at 87%
+# luminance behind a 0.95 alpha, foreground is #E0E0E0, and the panel borders use
+# primary #0178D4 (luminance ~101). On a real terminal you never see those values -
+# the emulator substitutes its own palette for the ANSI slots and most palettes
+# brighten them. In a browser (textual-serve runs the app in truecolor) they are
+# painted literally, which is the whole "sekka looks faint in the browser" effect.
+# So sekka ships a theme of its own: white text, no alpha loss, bright borders.
+SEKKA_THEME = Theme(
+    name="sekka",
+    primary="#00afff",        # borders + focus: was #0178D4
+    secondary="#5f87d7",      # file-picker / knowledge borders: was #004578
+    background="#121212",     # stay terminal-dark; brightness comes from the ink
+    surface="#1e1e1e",
+    panel="#24343c",
+    foreground="#ffffff",     # was #E0E0E0
+    success="#5fd787",
+    warning="#ffd75f",
+    error="#ff5f5f",
+    boost="#FFFFFF14",
+    dark=True,
+    text_alpha=1.0,           # textual-dark dims all text to 95%; not needed here
+    variables={"text": "auto 100%", "text-muted": "auto 72%"},   # was auto 87% / 60%
+)
 
 
 class Submit(Message):
@@ -704,6 +730,8 @@ class SekkaApp(App):
                 yield Static(id="ctx_status", classes="msg-stats")
 
     def on_mount(self) -> None:
+        self.register_theme(SEKKA_THEME)
+        self.theme = "sekka"
         title = "sekka"
         model = self.config["model"]
         if model:
