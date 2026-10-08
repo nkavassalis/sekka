@@ -17,9 +17,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 serve = ["textual-serve>=1.1"]
+browser = ["playwright>=1.40"]
 
 [project.scripts]
 sekka = "sekka.cli:main"
 
 [tool.setuptools]
 packages = ["sekka"]
+
+[tool.setuptools.package-data]
+sekka = ["templates/*.html"]

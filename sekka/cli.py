@@ -119,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serve-port", dest="serve_port", type=int, help="port for 'sekka serve' (default 8484)")
     parser.add_argument("--serve-title", help="browser tab title for 'sekka serve'")
     parser.add_argument(
+        "--serve-public-url",
+        dest="serve_public_url",
+        help="absolute URL the page is reached at (e.g. https://play.example.net/sekka);"
+             " use behind a reverse proxy or an SSH tunnel on another port, where the"
+             " bind address is not what the browser typed",
+    )
+    parser.add_argument(
         "--serve-allow-public",
         action="store_true",
         help="let 'sekka serve' bind a non-loopback address (no auth: read the docs first)",
@@ -138,6 +145,7 @@ SERVE_ONLY_FLAGS = (
     "serve_host",
     "serve_port",
     "serve_title",
+    "serve_public_url",
     "serve_allow_public",
     "serve_readonly",
 )
@@ -232,6 +240,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             title=args.serve_title,
             extra_args=served_flags,
             allow_public=args.serve_allow_public,
+            public_url=args.serve_public_url,
         )
 
     from .tui import SekkaApp

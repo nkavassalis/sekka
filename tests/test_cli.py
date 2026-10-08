@@ -22,13 +22,14 @@ def captured_main(monkeypatch, argv):
             box["ran"] = True
 
     def fake_run_server(config, *, host=None, port=None, title=None,
-                        extra_args=(), allow_public=False):
+                        extra_args=(), allow_public=False, public_url=None):
         box["served"] = {
             "host": host,
             "port": port,
             "title": title,
             "extra_args": list(extra_args),
             "allow_public": allow_public,
+            "public_url": public_url,
         }
         return 0
 
@@ -106,7 +107,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
     }
     assert box["served"] == {
         "host": "0.0.0.0", "port": 9000, "title": None,
-        "extra_args": [], "allow_public": False,
+        "extra_args": [], "allow_public": False, "public_url": None,
     }
 
 
@@ -116,6 +117,7 @@ SERVE_ONLY = [
     ["--serve-title", "table"],
     ["--serve-allow-public"],
     ["--serve-readonly"],
+    ["--serve-public-url", "https://play.example.net/sekka"],
     # 0 is falsy but not absent: still a flag the user typed
     ["--serve-port", "0"],
 ]
@@ -224,3 +226,9 @@ def test_campaign_flag_is_passed_to_the_loader(monkeypatch):
 def test_no_remember_flag_reaches_config(monkeypatch):
     box = captured_main(monkeypatch, ["--no-remember"])
     assert box["overrides"]["remember"] is False
+
+
+def test_serve_public_url_reaches_the_server(monkeypatch):
+    box = captured_main(monkeypatch, ["serve", "--serve-public-url",
+                                      "https://play.example.net/sekka"])
+    assert box["served"]["public_url"] == "https://play.example.net/sekka"
