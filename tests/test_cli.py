@@ -58,6 +58,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "--save-dir", "/tmp/saves",
         "--save-format", "markdown",
         "--autosave",
+        "--remember",
     ])
     assert box["overrides"] == {
         "endpoint": "http://h:8000/v1",
@@ -81,6 +82,7 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "frequency_penalty": 0.2,
         "repetition_penalty": 1.1,
         "stop": ["Player:", "GM:"],
+        "remember": True,
     }
 
 
@@ -151,3 +153,8 @@ def test_no_stream_flag_reaches_config(monkeypatch):
 def test_campaign_flag_is_passed_to_the_loader(monkeypatch):
     box = captured_main(monkeypatch, ["--campaign", "camp.json"])
     assert box["campaign_path"] == "camp.json"
+
+
+def test_no_remember_flag_reaches_config(monkeypatch):
+    box = captured_main(monkeypatch, ["--no-remember"])
+    assert box["overrides"]["remember"] is False

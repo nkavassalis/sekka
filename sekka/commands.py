@@ -23,6 +23,8 @@ COMMAND_ALIASES = {
     "note": "note",
     "roll": "roll",
     "ooc": "ooc",
+    "play": "play",
+    "rp": "play",
     "state": "note",
     "campaign": "campaign",
     "exit": "exit",
@@ -45,6 +47,7 @@ COMMAND_HELP = [
     ("/note", "show, set, +append, or clear the pinned note / running state"),
     ("/roll", "roll real dice, e.g. /roll 2d6+3 (result goes into context)"),
     ("/ooc", "say something out of character, as a single message"),
+    ("/play", "roleplaying quick reference (dice, note, takes-backs, keys)"),
     ("/campaign", "show the loaded campaign, or load one: /campaign FILE.json"),
     ("/clear", "clear the chat history"),
     ("/exit", "quit sekka (same as ctrl+c twice)"),
@@ -75,3 +78,46 @@ def parse_input(raw: str) -> ParsedInput:
 def resolve_command(name: str) -> Optional[str]:
     """Canonical command name for ``name`` (handles aliases), None if unknown."""
     return COMMAND_ALIASES.get(name)
+
+
+# Shown by /play: grouped so it reads as a cheat sheet, not a man page.
+PLAY_WIDTH = 17
+
+
+PLAY_HELP = [
+    ("scenes", [
+        ("/roll 2d6+3", "real dice; rides along with your next message"),
+        ("/ooc <text>", "out of character, as one message (ctrl+o toggles)"),
+        ("/note <text>", "set the pinned running state; /note +x appends"),
+    ]),
+    ("takes", [
+        ("/undo", "delete the last exchange"),
+        ("/edit", "your last message, back in the input to fix"),
+        ("/regen", "a different reply; the old one is kept"),
+        ("/swipe", "cycle the versions of that reply"),
+        ("/stop", "stop the reply mid-sentence (ctrl+x)"),
+    ]),
+    ("world", [
+        ("/campaign <file>", "load a campaign (auto-loaded if beside config)"),
+        ("/knowledge", "lore files, as tools or keyword triggers"),
+        ("/thinking", "show the model's thinking and tool calls (ctrl+t)"),
+    ]),
+    ("session", [
+        ("/save", "save the chat; /config for autosave"),
+        ("/config", "endpoint, model, sampler, prompt, note"),
+        ("/models", "pick another model (your pick is remembered)"),
+    ]),
+]
+
+
+def play_help_text() -> str:
+    """Render PLAY_HELP as the text /play prints."""
+    lines = ["Roleplaying quick reference:"]
+    for group, rows in PLAY_HELP:
+        lines.append("")
+        lines.append(f"  {group}")
+        for invocation, description in rows:
+            lines.append(f"    {invocation:<{PLAY_WIDTH}} {description}")
+    lines.append("")
+    lines.append("  (full list: /help   -   bindings and labels: /config)")
+    return "\n".join(lines)

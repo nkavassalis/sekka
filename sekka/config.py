@@ -45,6 +45,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stream": True,
     "knowledge": [],
     "autosave": False,
+    "remember": True,
     "save_dir": ".",
     "save_format": "json",
     "labels": {"user": "You", "assistant": "Assistant"},
@@ -293,6 +294,9 @@ def validate_config(values: dict[str, Any]) -> None:
     ):
         raise ConfigError("Config 'request_timeout' must be null, 0 (wait forever), or a positive number.")
 
+    if not isinstance(values.get("remember"), bool):
+        raise ConfigError("Config 'remember' must be true or false.")
+
     if not isinstance(values.get("stream"), bool):
         raise ConfigError("Config 'stream' must be true or false.")
 
@@ -506,6 +510,68 @@ def load_config(
         campaign_path=campaign,
         campaign_keys=set(campaign_values) - cli_keys - env_keys,
     )
+
+
+# What `sekka --endpoint URL` is allowed to write into the config file so the
+# next bare `sekka` in this directory just works. Endpoint and model are the two
+# things every first run needs, and neither is a secret. api_key deliberately is
+# not on this list: it stays in the flag/env/campaign or in a file you wrote.
+REMEMBERED_KEYS = ("endpoint", "model")
+
+
+def remember_cli_values(config: Config) -> tuple[Optional[Path], list[str]]:
+    """Persist the safe CLI overrides into the config file.
+
+    Returns ``(path_written_or_None, keys_remembered)``. Values that came from
+    the environment, or that the config file already has identical, are not
+    written; nothing is written at all when `remember` is off.
+    """
+    if not config.values.get("remember", True):
+        return None, []
+    keys = [
+        key
+        for key in REMEMBERED_KEYS
+        if key in config.cli_keys
+        and key not in config.env_keys
+        and config.values.get(key) not in (None, "")
+    ]
+    if not keys:
+        return None, []
+
+    # Always remember *locally*: if the only config found was ~/.sekka/config.json,
+    # writing a project's endpoint into the user's global file would leak it into
+    # every other directory. The local file wins over the user file, as it should.
+    target = config.path
+    if target is None or _under_cwd(target) is False:
+        target = default_save_path()
+
+    wanted = {key: copy.deepcopy(config.values[key]) for key in keys}
+    try:
+        current = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+    except (OSError, ValueError):
+        current = {}
+    if isinstance(current, dict) and all(
+        current.get(key) == value for key, value in wanted.items()
+    ):
+        return None, []            # already recorded: leave the file alone
+
+    for key in wanted:
+        config.release_override(key)          # the user asked for this: persist it
+    config.path = target                      # /config edits this file from now on
+    path = save_config(config)
+    return path, list(wanted)
+
+
+def _under_cwd(path: Path) -> Optional[bool]:
+    """True when path sits inside the working directory, False when it clearly
+    does not, None when it cannot be decided."""
+    try:
+        path.resolve().relative_to(Path.cwd().resolve())
+        return True
+    except ValueError:
+        return False
+    except OSError:
+        return None
 
 
 def save_campaign_values(config: Config, values: dict[str, Any]) -> Optional[Path]:

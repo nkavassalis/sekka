@@ -8,6 +8,20 @@ Sekka looks for a JSON config file in this order (first hit wins):
 2. `./.sekka/config.json` (current working directory)
 3. `~/.sekka/config.json` (user home)
 
+**Remembered flags:** pass `--endpoint` and/or `--model` and sekka writes them into
+`./.sekka/config.json` at startup, so the next bare `sekka` in that directory
+just works. Deliberately narrow:
+
+- only `endpoint` and `model` - never `api_key` or anything else;
+- never a value that came from an environment variable;
+- never into `~/.sekka/config.json`: a project's endpoint belongs to the project,
+  so a local file is created instead (and wins on the next load);
+- never rewritten when the file already holds those values;
+- opt out with `--no-remember` or `"remember": false`.
+
+Choosing a model from the `/models` picker is remembered too, because you chose
+it; auto-selecting the one model an endpoint happens to host is not.
+
 The `/config` screen edits these values and writes them back to whichever
 file was loaded — or to `./.sekka/config.json` if no file existed yet.
 
@@ -281,6 +295,7 @@ according to `context_mode`:
 | `greeting`        | string          | `""`                          | Opening scene (usually from a campaign); shown + in context |
 | `player`          | string          | `""`                          | Your character, appended to the system prompt |
 | `note`            | string          | `""`                          | Pinned running state, sent last; `/note` edits it |
+| `remember`        | bool            | `true`                        | Write `--endpoint`/`--model` into the local config file |
 | `top_p`             | float \| null   | `null` (endpoint)             | Nucleus sampling cutoff (0-1) |
 | `min_p`             | float \| null   | `null` (endpoint)             | min-p cutoff (vLLM / llama.cpp extension) |
 | `presence_penalty`  | float \| null   | `null` (endpoint)             | Presence penalty (-2 to 2) |

@@ -67,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SEQ",
         help="stop sequence; repeat the flag for several (e.g. --stop 'Player: --')",
     )
+    parser.add_argument(
+        "--remember",
+        action=argparse.BooleanOptionalAction,
+        help="write --endpoint/--model into ./.sekka/config.json so the next bare"
+             " sekka works (--remember / --no-remember)",
+    )
     parser.add_argument("--save-dir", help="where /save and autosave write files")
     parser.add_argument(
         "--save-format", choices=["json", "markdown"], help="saved file format"
@@ -119,6 +125,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "save_dir": args.save_dir,
         "save_format": args.save_format,
         "autosave": args.autosave,
+        "remember": args.remember,
     }
     try:
         config = load_config(overrides, config_path=args.config, campaign_path=args.campaign)

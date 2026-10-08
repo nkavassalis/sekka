@@ -1,3 +1,4 @@
+from sekka import commands
 from sekka.commands import parse_input, resolve_command
 
 
@@ -43,3 +44,23 @@ def test_aliases_resolve():
     assert resolve_command("exit") == "exit"
     assert resolve_command("bogus") is None
     assert resolve_command("") is None
+
+
+def test_play_groups_cover_the_documented_commands():
+    listed = {
+        line.split()[0].lstrip("/")
+        for group in commands.PLAY_HELP
+        for line, _ in group[1]
+    }
+    documented = {
+        cmd.split()[0].lstrip("/") for cmd, _ in commands.COMMAND_HELP
+    }
+    assert listed <= documented, listed - documented
+    assert {"roll", "ooc", "note", "regen", "swipe", "stop", "undo", "edit"} <= listed
+
+
+def test_play_help_text_is_rendered():
+    text = commands.play_help_text()
+    assert "quick reference" in text
+    assert "/roll 2d6+3" in text and "/swipe" in text
+    assert "/help" in text            # points at the full list

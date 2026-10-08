@@ -79,11 +79,16 @@ zero speedup and are deliberately not shipped.
 
 ```bash
 sekka --endpoint http://your-llm-server:8000/v1
-# or pick a model directly:
+# or pin a model too:
 sekka --endpoint http://your-llm-server:8000/v1 --model your-model-id
 ```
 
-Then just type and press **enter**. `/help` lists the in-chat commands.
+That flag is written to `./.sekka/config.json` for you, so from now on you start a
+chat in this directory by typing just **sekka**. Only `--endpoint` and `--model`
+are remembered - never `--api-key` - and `--no-remember` opts out. If you keep a
+`~/.sekka/config.json`, a project's endpoint still goes in the project.
+
+Type and press **enter**. `/help` lists the in-chat commands.
 
 Pointing at a folder that contains a `campaign.json` (see
 [`examples/roleplaying/`](examples/)) makes that the scenario you are playing:
@@ -112,6 +117,7 @@ sekka [options]
 --frequency-penalty F  frequency penalty
 --repetition-penalty F repetition penalty (vLLM/llama.cpp extension)
 --stop SEQ             stop sequence; repeat the flag for several
+--remember             remember --endpoint/--model (--remember / --no-remember)
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
@@ -144,6 +150,7 @@ file > defaults** - so one campaign can be pointed at any endpoint.
 | `/knowledge` | manage knowledge files offered to the model as tools        |
 | `/note`      | show / set / `+append` / clear the pinned running state    |
 | `/roll`      | roll real dice, e.g. `/roll 2d6+3` (goes into context)     |
+| `/play`      | roleplaying quick reference (`/rp` for short)             |
 | `/ooc`       | say something out of character, as one message            |
 | `/campaign`  | show the loaded campaign, or load one: `/campaign FILE`   |
 | `/thinking`  | show/hide model thinking & tool calls (also **ctrl+t**)     |
@@ -176,6 +183,21 @@ Defaults (configurable via the `keys` block in the config file, see
 Thinking and tool-call lines are hidden by default and always start hidden;
 `/knowledge` files become read-only tools for models that support tool
 calling (see [docs](docs/configuration.md) for the security notes).
+
+## Roleplaying cheat sheet
+
+Printed in-app by **`/play`** (alias `/rp`):
+
+```
+/roll 1d20+3        real dice; the result rides along with your next message
+/note +took the key append to the pinned state (survives summarising)
+/ooc shorter scenes one out-of-character message  (ctrl+o toggles the mode)
+/regen              a different reply to the same line, the previous one kept
+/swipe              cycle the versions you generated
+/undo               drop the last exchange          /edit   fix and resend it
+/stop               stop the reply mid-sentence, keep what landed   (ctrl+x)
+/campaign FILE      load a campaign (a campaign.json beside the config loads itself)
+```
 
 ## Files
 

@@ -31,6 +31,7 @@ from .config import (
     DEFAULT_CONFIG,
     Config,
     deep_merge,
+    remember_cli_values,
     save_campaign_values,
     save_config,
     validate_config,
@@ -715,6 +716,7 @@ class SekkaApp(App):
             + "\nType /help for commands.",
             "system",
         )
+        self._remember_cli_flags()
         if not model:
             self._ensure_models(refresh=False)
         elif not self.config.get("context_window"):
@@ -728,6 +730,21 @@ class SekkaApp(App):
         else:
             self._load_always_lore()
             self._maybe_greet()
+
+    def _remember_cli_flags(self) -> None:
+        """`sekka --endpoint URL` once per directory, then bare `sekka` works."""
+        try:
+            path, keys = remember_cli_values(self.config)
+        except (ConfigError, OSError) as exc:
+            self._sys(f"Could not remember these settings: {exc}", error=True)
+            return
+        if path is None:
+            return
+        what = " and ".join(keys)
+        self._sys(
+            f"Remembered {what} in {path} - next time just run: sekka"
+            "  (use --no-remember to skip this)"
+        )
 
     def _maybe_greet(self) -> None:
         """A campaign's opening line opens the scene (and enters the context)."""
@@ -1478,6 +1495,7 @@ class SekkaApp(App):
                 "  ctrl+x    stop the reply being generated (keeps what arrived)",
                 "  ctrl+o    out-of-character mode on/off",
                 "  escape    clear the input box",
+                "(roleplaying quick reference: /play)",
                 "(key bindings and colors are configured in the config file)",
             ]
             self._sys("\n".join(lines))
@@ -1510,6 +1528,8 @@ class SekkaApp(App):
             self.action_stop_generation()
         elif command in ("undo", "edit", "regen", "swipe"):
             self._turn_edit(command)
+        elif command == "play":
+            self._sys(commands.play_help_text())
         elif command == "roll":
             self._handle_roll(arg)
         elif command == "ooc":
@@ -1866,15 +1886,23 @@ class SekkaApp(App):
             return
         chosen = await self.push_screen_wait(ModelScreen(ids))
         if chosen:
-            self._select_model(chosen)
+            # a deliberate pick from a list is worth remembering; silently
+            # pinning the only model an endpoint happens to host is not
+            self._select_model(chosen, persist=True)
         elif refresh:
             self._sys("(kept current model)")
 
-    def _select_model(self, model: str) -> None:
+    def _select_model(self, model: str, persist: bool = False) -> None:
         self.config["model"] = model
         self.title = f"sekka - {model}"
         self._apply_context_total()
         self._sys(f"Model selected: {model}")
+        if persist:
+            try:
+                path = save_config(self.config)
+                self._sys(f"(model remembered in {path})")
+            except (OSError, ConfigError) as exc:
+                self._sys(f"Model chosen for this session, but not saved: {exc}", error=True)
 
     def _apply_context_total(self) -> None:
         """Context size: explicit config wins, else the endpoint's max_model_len."""
