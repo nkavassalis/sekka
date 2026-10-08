@@ -13,11 +13,14 @@ sekka --endpoint http://your-host:8000/v1
 
 | Example | What it shows off |
 |---------|-------------------|
-| [`roleplaying/`](roleplaying/)      | Character cards + world lore as tools; the model "knows" its cast and setting without cramming it all into the system prompt |
+| [`roleplaying/`](roleplaying/)      | A full **campaign**: `campaign.json` holds the GM prompt, labels, opening scene and your character; character cards and world lore are tools, so the model "knows" its cast without cramming it into the system prompt |
 | [`medical-practice/`](medical-practice/) | Workflow knowledge bases (check-in, insurance, payments, refills, triage) for a hypothetical clinic assistant |
 
 ## Things to know
 
+- **The roleplaying example is a campaign.** `.sekka/config.json` only points at
+  an endpoint and picks a context mode; the fiction lives in
+  `.sekka/campaign.json` beside it. Copy that pair to start your own scenario.
 - **All content is fictional.** Names, places, and procedures are invented.
   The medical example is a *hypothetical* practice with *made-up* policies -
   it is not medical, billing, or legal advice, and the model will happily

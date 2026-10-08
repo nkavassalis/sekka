@@ -20,6 +20,7 @@ COMMAND_ALIASES = {
     "regen": "regen",
     "r": "regen",
     "swipe": "swipe",
+    "campaign": "campaign",
     "exit": "exit",
     "quit": "exit",
     "q": "exit",
@@ -37,6 +38,7 @@ COMMAND_HELP = [
     ("/edit", "put your last message back in the input to fix and resend"),
     ("/regen", "replace the last reply with a new one (keeps the old as an alternative)"),
     ("/swipe", "cycle to the other generated versions of the last reply"),
+    ("/campaign", "show the loaded campaign, or load one: /campaign FILE.json"),
     ("/clear", "clear the chat history"),
     ("/exit", "quit sekka (same as ctrl+c twice)"),
 ]

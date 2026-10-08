@@ -11,8 +11,8 @@ Sekka looks for a JSON config file in this order (first hit wins):
 The `/config` screen edits these values and writes them back to whichever
 file was loaded — or to `./.sekka/config.json` if no file existed yet.
 
-Precedence of a single value: **CLI flag > environment variable > config file >
-built-in default**.
+Precedence of a single value: **CLI flag > environment variable > campaign file
+> config file > built-in default**.
 
 ## Full example
 
@@ -111,6 +111,43 @@ location lore for RPGs - anything the model should be able to look up.
   (UTF-8, max 256 KB) and feeds the contents back as the tool result.
   Unknown/hallucinated tool names are refused without touching the disk.
 
+### Campaigns (`--campaign FILE`, `SEKKA_CAMPAIGN`, `campaign`)
+
+A campaign is the *scenario*, kept separate from where your model lives, so a
+whole game is one folder you `cd` into and run Sekka in. It is searched for in
+this order: `--campaign` / `SEKKA_CAMPAIGN`, the `campaign` key in your config
+file (relative to that file), `campaign.json` beside the config, then
+`./.sekka/campaign.json`.
+
+```json
+{
+  "name": "The Frostspire Marches",
+  "system_prompt": "You are the game master ...",
+  "labels": { "user": "Player", "assistant": "GM" },
+  "temperature": 0.9,
+  "reasoning": "low",
+  "player": "Vesna Chalk, hedge-mage, 12 shillings, a borrowed coat",
+  "greeting": "The last barge of the night slides into the locks. What do you do?",
+  "knowledge": [
+    { "file": "knowledge/world.md", "description": "World rules and factions", "enabled": true }
+  ]
+}
+```
+
+- Campaign values **override the config file** but not CLI flags or environment
+  variables, so one campaign runs against any endpoint.
+- They are never written back into `config.json` by `/config` or `/knowledge` —
+  edit the campaign file itself. `/campaign FILE` records only the *path*, so the
+  same scenario loads next time.
+- `greeting` opens the scene: it is displayed and enters the model's context, so
+  what you type first is an answer to it.
+- `player` is appended to the system prompt as the player's character.
+- Relative `knowledge` paths resolve against the campaign's folder first, then
+  the working directory, so a campaign folder works from anywhere.
+- `/save` records which campaign (and role labels) a session used, and
+  `sekka -r` reloads them so a saved game resumes as itself. Markdown saves stay
+  plain and carry no metadata.
+
 ### Streaming (`--stream` / `--no-stream`, `stream`)
 
 Replies stream into the view token by token (default on). Endpoints that
@@ -158,6 +195,9 @@ according to `context_mode`:
 | `labels.assistant`| string          | `"Assistant"`                 | Name shown before replies (also editable in `/config`) |
 | `save_dir`        | string          | `"."`                         | Where `/save` and autosave write files             |
 | `save_format`     | `json`/`markdown` | `json`                      | `.json` or `.md` output                            |
+| `campaign`        | string          | `""`                          | Campaign file to load (relative to this config file) |
+| `greeting`        | string          | `""`                          | Opening scene (usually from a campaign); shown + in context |
+| `player`          | string          | `""`                          | Your character, appended to the system prompt |
 | `stream`          | bool            | `true`                        | Stream replies into the view; `--no-stream` shows them whole |
 | `autosave`        | bool            | `false`                       | Update one session file after every reply (first write picks the timestamped name; manual `/save` still asks first) |
 
