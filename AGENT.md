@@ -193,6 +193,14 @@ is called for changed keys only. Don't simplify this back to writing
   recheck on version bumps. Served sessions discover config from the *server's* cwd,
   so serve from the campaign folder. Loopback binding is enforced unless
   `--serve-allow-public`, because the server has no auth and no TLS.
+- **`--serve-*` flags require the `serve` mode** (`cli.serve_mode_error`, called
+  from `main()` *before* `load_config`). `sekka --serve-port 9100` used to fall
+  through to chat mode and silently drop the flag - while still putting
+  `serve_host`/`serve_port` in the overrides dict, so `--remember` could persist a
+  public bind address. Now it exits 2 with a hint, before the config is loaded, so
+  nothing is read or written. Keep the check ahead of `load_config` and remember
+  `--serve-port 0` must still count as "flag given" (0 is falsy but `isinstance(v,
+  bool)` guards the store_true flags).
 - **`/play` (alias `/rp`) prints the roleplaying cheat sheet in-app**, built from
   `commands.PLAY_HELP` (groups: scenes / takes / world / session) via
   `play_help_text()`. Do not hardcode that text in the TUI or README:
@@ -351,8 +359,12 @@ collisions, non-loopback binds, TLS/reverse proxies, Windows.
 
 - Dev endpoint URL/model and local overrides go in `.sekka/config.json`
   (auto-discovered, gitignored). See `LOCAL.md`.
-- Tests: `python3 -m pytest tests/ -q` (Textual Pilot; ~130 tests, all should
-  pass in ~55 s - the SSE tests sleep deliberately). `conftest.py` keeps tests off the real config/network.
+- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 237 tests, all
+  should pass in ~110 s - the SSE tests sleep deliberately). `conftest.py` keeps
+  tests off the real config/network. The fresh venv needs `pip install -e '.[dev]'`
+  **and** `pip install 'textual-serve>=1.1'`: without the serve extra,
+  `test_public_bind_is_refused_without_explicit_opt_in` fails on the ImportError
+  branch, which is environmental, not a regression.
 - Tests must not name real internal services: one captive-portal test used to
   embed a real dashboard name; use generic stand-ins.
 - A working tree once mysteriously lost files; recovery was via

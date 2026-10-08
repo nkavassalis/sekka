@@ -4,7 +4,7 @@ from sekka import cli
 
 
 def captured_main(monkeypatch, argv):
-    """Run cli.main with load_config/SekkaApp stubbed; return overrides + path."""
+    """Run cli.main with load_config/SekkaApp/run_server stubbed; return overrides + path."""
     box = {}
 
     def fake_load(overrides, config_path=None, campaign_path=None):
@@ -21,8 +21,20 @@ def captured_main(monkeypatch, argv):
         def run(self):
             box["ran"] = True
 
+    def fake_run_server(config, *, host=None, port=None, title=None,
+                        extra_args=(), allow_public=False):
+        box["served"] = {
+            "host": host,
+            "port": port,
+            "title": title,
+            "extra_args": list(extra_args),
+            "allow_public": allow_public,
+        }
+        return 0
+
     monkeypatch.setattr(cli, "load_config", fake_load)
     monkeypatch.setattr("sekka.tui.SekkaApp", FakeApp)
+    monkeypatch.setattr("sekka.serve.run_server", fake_run_server)
     assert cli.main(argv) == 0
     return box
 
@@ -35,7 +47,9 @@ def test_no_flags_yields_all_none_overrides(monkeypatch):
 
 
 def test_every_flag_maps_to_its_config_key(monkeypatch):
+    # served run: --serve-* flags are only accepted alongside the 'serve' mode
     box = captured_main(monkeypatch, [
+        "serve",
         "--endpoint", "http://h:8000/v1",
         "--model", "m1",
         "--system", "be brief",
@@ -90,6 +104,52 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "serve_host": "0.0.0.0",
         "serve_port": 9000,
     }
+    assert box["served"] == {
+        "host": "0.0.0.0", "port": 9000, "title": None,
+        "extra_args": [], "allow_public": False,
+    }
+
+
+SERVE_ONLY = [
+    ["--serve-host", "0.0.0.0"],
+    ["--serve-port", "9100"],
+    ["--serve-title", "table"],
+    ["--serve-allow-public"],
+    ["--serve-readonly"],
+    # 0 is falsy but not absent: still a flag the user typed
+    ["--serve-port", "0"],
+]
+
+
+@pytest.mark.parametrize("argv", SERVE_ONLY)
+def test_serve_flags_without_the_serve_mode_are_rejected(monkeypatch, capsys, argv):
+    """--serve-* on a plain `sekka` must not quietly open the TUI instead."""
+    def boom(*a, **kw):
+        raise AssertionError("load_config must not run: nothing may be written")
+
+    monkeypatch.setattr(cli, "load_config", boom)
+    assert cli.main(argv + ["--remember"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("sekka: --serve-")
+    assert "sekka serve" in err
+
+
+def test_serve_mode_error_names_every_stray_flag():
+    args = cli.build_parser().parse_args(["--serve-port", "9100", "--serve-readonly"])
+    msg = cli.serve_mode_error(args)
+    assert "--serve-port" in msg and "--serve-readonly" in msg
+
+
+@pytest.mark.parametrize("argv", [list(f) for f in SERVE_ONLY] + [["--serve-allow-public"]])
+def test_serve_flags_are_accepted_when_the_mode_is_there(monkeypatch, argv):
+    # argparse takes the positional anywhere, so `--serve-port N serve` is a serve run
+    box = captured_main(monkeypatch, argv + ["serve"])
+    assert "served" in box and "ran" not in box
+
+
+def test_plain_chat_run_is_untouched_by_the_guard(monkeypatch):
+    box = captured_main(monkeypatch, ["--readonly", "--endpoint", "http://h:8000/v1"])
+    assert box["ran"] and "served" not in box
 
 
 def test_no_autosave_flag_is_false_not_none(monkeypatch):

@@ -236,6 +236,12 @@ was the host's own choice.
 terminal UI on `http://127.0.0.1:8484`, using `serve_host` / `serve_port` from
 the config or `--serve-host` / `--serve-port`.
 
+- **The `--serve-*` flags need the `serve` mode.** `sekka --serve-port 9100` exits
+  2 with a hint instead of opening the terminal UI and dropping the flag on the
+  floor (it used to do exactly that, and `--serve-host`/`--serve-port` would even
+  reach the config overrides). The check runs before the config is loaded, so a
+  refusal also can't write anything with `--remember`.
+
 - **Loopback by default, and enforced.** A non-loopback `serve_host` makes sekka
   exit with an explanation; `--serve-allow-public` overrides that. The server has
   no authentication and no TLS, so a reachable port means anyone can use your

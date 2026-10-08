@@ -123,7 +123,7 @@ sekka [options]
 --stop SEQ             stop sequence; repeat the flag for several
 --remember             remember --endpoint/--model (--remember / --no-remember)
 --readonly             play without being able to change or write anything
---serve-readonly       shorthand for `serve -- --readonly`
+--serve-readonly       shorthand for `serve -- --readonly` (needs the `serve` mode)
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
@@ -183,6 +183,11 @@ sekka serve -- --endpoint http://box:8000/v1    # flags after -- reach each sess
 It is not a second front end. Each browser tab runs a real `sekka` process on a
 pseudo-terminal and the terminal rendering is streamed to the page, so commands,
 keys, themes, streaming and saves behave exactly as they do in a terminal.
+
+The `--serve-*` flags belong to the mode, so they need `serve` on the command
+line. `sekka --serve-port 9100` is refused with an explanation instead of
+silently opening the terminal UI and ignoring the flag (nothing is loaded or
+written when it refuses).
 
 Before relying on it:
 
