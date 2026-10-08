@@ -1318,3 +1318,118 @@ def test_empty_reply_is_reported_and_not_stored_as_an_empty_turn():
         finally:
             client.stream_chat_completion = _orig_stream
     asyncio.run(go())
+
+
+# ------------------------------------------------------------ lore triggers
+
+
+def test_keyword_trigger_pulls_lore_into_the_first_request(tmp_path):
+    lore = tmp_path / "cold-art.md"
+    lore.write_text("NO RESURRECTION, NO MIND CONTROL")
+    calls = []
+
+    def fake(endpoint, model, messages, **kwargs):
+        calls.append((messages, kwargs.get("tools")))
+        yield client.StreamEvent(content="noted")
+        yield client.StreamEvent(
+            content="noted", message={"role": "assistant", "content": "noted"},
+            completion_tokens=2, elapsed=0.1,
+        )
+
+    cfg = make_config(
+        model="m",
+        stream=True,
+        knowledge=[{
+            "file": str(lore),
+            "description": "magic rules",
+            "enabled": True,
+            "keywords": ["Cold Art", "weaving"],
+        }],
+    )
+
+    async def go():
+        old = client.stream_chat_completion
+        client.stream_chat_completion = fake
+        try:
+            app = SekkaApp(cfg)
+            async with app.run_test(size=(90, 30)) as pilot:
+                await run_typing(pilot, "I try a bit of Cold Art")
+                await pilot.press("enter")
+                await wait_for(pilot, lambda: not app.busy)
+        finally:
+            client.stream_chat_completion = old
+        return app
+
+    app = asyncio.run(go())
+    messages, tools = calls[0]
+    assert tools in (None, []), "keyword lore must not need tool calling"
+    assert "NO RESURRECTION, NO MIND CONTROL" in messages[0]["content"]
+    assert "--- cold-art.md ---" in messages[0]["content"]
+    assert "lore loaded" in app.notice_text
+
+
+def test_keyword_that_does_not_match_loads_nothing(tmp_path):
+    lore = tmp_path / "secret.md"
+    lore.write_text("HIDDEN")
+    cfg = make_config(model="m", knowledge=[
+        {"file": str(lore), "description": "d", "enabled": True, "keywords": ["dragon"]}])
+    app = SekkaApp(cfg)
+    assert app._trigger_lore("nothing to see here") == []
+    assert app.lore == {}
+    assert app._trigger_lore("a DRAGON appears") == ["secret.md"]
+    assert app._trigger_lore("dragon again") == []   # loaded once per session
+
+
+def test_always_entries_are_loaded_before_the_first_message(tmp_path):
+    lore = tmp_path / "world.md"
+    lore.write_text("THE FROST SINGS")
+    cfg = make_config(model="m", knowledge=[
+        {"file": str(lore), "description": "d", "enabled": True, "always": True}])
+    app = SekkaApp(cfg)
+    assert app.lore == {}                      # not before the app starts
+    async def go():
+        app2 = SekkaApp(make_config(model="m", knowledge=[
+            {"file": str(lore), "description": "d", "enabled": True, "always": True}]))
+        async with app2.run_test(size=(90, 30)) as pilot:
+            await pilot.pause()
+            assert "THE FROST SINGS" in app2._system_text()
+            assert "always-on lore loaded" in app2.notice_text
+            # and it is not offered as a tool either
+            assert app2._knowledge_tools()[0] == []
+    asyncio.run(go())
+
+
+def test_lore_cap_drops_the_oldest_entries(tmp_path, monkeypatch):
+    app = SekkaApp(make_config(model="m"))
+    monkeypatch.setattr(SekkaApp, "LORE_MAX_TOTAL_CHARS", 300)
+    app._load_into_lore("/tmp/a.md", "A" * 200)
+    app._load_into_lore("/tmp/b.md", "B" * 200)
+    assert list(app.lore) == ["/tmp/b.md"], "oldest entry should have been dropped"
+    assert "B" * 200 in app._system_text()
+
+
+def test_knowledge_screen_stores_keywords_and_always(tmp_path):
+    lore = tmp_path / "world.md"
+    lore.write_text("content")
+    async def go():
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(json.dumps({"model": "m"}))
+        from sekka.config import load_config
+        config = load_config(config_path=str(cfg_path))
+        app = SekkaApp(config)
+        async with app.run_test(size=(110, 40)) as pilot:
+            await run_typing(pilot, "/knowledge")
+            await pilot.press("enter")
+            await wait_for(pilot, lambda: isinstance(app.screen, KnowledgeScreen))
+            screen = app.screen
+            screen.query_one("#k_path", Input).value = str(lore)
+            screen.query_one("#k_desc", Input).value = "world rules"
+            screen.query_one("#k_keywords", Input).value = "tavern, cold art"
+            screen.query_one("#k_always", Checkbox).value = True
+            screen.query_one("#k_add", Button).press()
+            await wait_for(pilot, lambda: len(app.config["knowledge"]) == 1)
+        saved = json.loads(cfg_path.read_text())
+        assert saved["knowledge"][0]["keywords"] == ["tavern", "cold art"]
+        assert saved["knowledge"][0]["always"] is True
+        assert saved["knowledge"][0]["file"] == str(lore)
+    asyncio.run(go())

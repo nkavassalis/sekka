@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -331,3 +332,22 @@ def test_resolve_path_prefers_base_dir_then_cwd(clean_env, monkeypatch):
     assert cfg.resolve_path("knowledge/other.md").read_text() == "only in cwd"
     # absolute paths pass through
     assert str(cfg.resolve_path("/etc/hostname")) == "/etc/hostname"
+
+
+def test_knowledge_keyword_validation(clean_env):
+    for bad in (
+        {"knowledge": [{"file": "a.md", "description": "", "enabled": True, "keywords": "tavern"}]},
+        {"knowledge": [{"file": "a.md", "description": "", "enabled": True, "keywords": [""]}]},
+        {"knowledge": [{"file": "a.md", "description": "", "enabled": True, "always": "yes"}]},
+        {"knowledge": [{"file": "a.md", "description": "", "enabled": True,
+                        "keywords": ["k"] * 21}]},
+    ):
+        values = copy.deepcopy(DEFAULT_CONFIG)
+        values.update(bad)
+        with pytest.raises(ConfigError):
+            validate_config(values)
+
+    values = copy.deepcopy(DEFAULT_CONFIG)
+    values["knowledge"] = [{"file": "a.md", "description": "", "enabled": True,
+                           "keywords": ["tavern"], "always": False}]
+    validate_config(values)   # optional fields accepted

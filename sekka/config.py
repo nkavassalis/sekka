@@ -60,6 +60,45 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
 }
 
+MAX_LORE_KEYWORDS = 20
+MAX_LORE_KEYWORD_CHARS = 64
+
+
+def _validate_knowledge_entries(entries: Any, where: str) -> None:
+    """Shared shape check for knowledge entries (config file and campaign file)."""
+    if not isinstance(entries, list):
+        raise ConfigError(f"{where} must be a list of entries.")
+    for entry in entries:
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("file"), str)
+            or not entry["file"].strip()
+            or not isinstance(entry.get("description"), str)
+            or not isinstance(entry.get("enabled"), bool)
+        ):
+            raise ConfigError(
+                f"Each {where} entry needs a non-empty 'file' (str), "
+                "a 'description' (str) and an 'enabled' (bool)."
+            )
+        if not isinstance(entry.get("always", False), bool):
+            raise ConfigError(f"'always' in a {where} entry must be true or false.")
+        keywords = entry.get("keywords", [])
+        if not isinstance(keywords, list) or len(keywords) > MAX_LORE_KEYWORDS:
+            raise ConfigError(
+                f"'keywords' in a {where} entry must be a list of up to "
+                f"{MAX_LORE_KEYWORDS} strings."
+            )
+        for keyword in keywords:
+            if (
+                not isinstance(keyword, str)
+                or not keyword.strip()
+                or len(keyword) > MAX_LORE_KEYWORD_CHARS
+            ):
+                raise ConfigError(
+                    f"Each 'keywords' item in a {where} entry must be a short non-empty string."
+                )
+
+
 VALID_SAVE_FORMATS = {"json", "markdown"}
 VALID_CONTEXT_MODES = {"pause", "rolling", "compact"}
 VALID_REASONING = {"none", "minimal", "low", "medium", "high"}
@@ -225,21 +264,7 @@ def validate_config(values: dict[str, Any]) -> None:
             f"Config 'reasoning' must be one of {sorted(VALID_REASONING)}."
         )
 
-    knowledge = values.get("knowledge")
-    if not isinstance(knowledge, list):
-        raise ConfigError("Config 'knowledge' must be a list of entries.")
-    for entry in knowledge:
-        if (
-            not isinstance(entry, dict)
-            or not isinstance(entry.get("file"), str)
-            or not entry["file"].strip()
-            or not isinstance(entry.get("description"), str)
-            or not isinstance(entry.get("enabled"), bool)
-        ):
-            raise ConfigError(
-                "Each 'knowledge' entry needs a non-empty 'file' (str), "
-                "a 'description' (str) and an 'enabled' (bool)."
-            )
+    _validate_knowledge_entries(values.get("knowledge"), "config 'knowledge'")
 
     labels = values.get("labels", {})
     for name in ("user", "assistant"):
@@ -289,21 +314,7 @@ def validate_campaign(values: dict[str, Any]) -> None:
             ):
                 raise ConfigError(f"Campaign label '{name}' must be a short non-empty string.")
     if "knowledge" in values:
-        entries = values["knowledge"]
-        if not isinstance(entries, list):
-            raise ConfigError("Campaign 'knowledge' must be a list.")
-        for entry in entries:
-            if (
-                not isinstance(entry, dict)
-                or not isinstance(entry.get("file"), str)
-                or not entry["file"].strip()
-                or not isinstance(entry.get("description"), str)
-                or not isinstance(entry.get("enabled"), bool)
-            ):
-                raise ConfigError(
-                    "Each campaign knowledge entry needs 'file' (str), "
-                    "'description' (str) and 'enabled' (bool)."
-                )
+        _validate_knowledge_entries(values["knowledge"], "campaign 'knowledge'")
 
 
 def _load_campaign(path: Path) -> dict[str, Any]:

@@ -208,6 +208,21 @@ is called for changed keys only. Don't simplify this back to writing
 - **Streaming sends `stream_options: {include_usage: true}`** so the context
   meter shows real usage mid-stream, and retries once without it on HTTP 400 for
   servers that reject unknown params. Meter falls back to the estimate there.
+- **Lorebook triggers (`keywords`, `always` on knowledge entries)**: keyword
+  matches in the *player's* message load the file into `self.lore`, which
+  `_system_text()` folds into the single system prompt (labelled with the file
+  name). Why it exists: it needs no tool calling, costs no extra round trip, and
+  keeps lore in context after the turn that asked for it. Rules to keep:
+  - Triggering happens in `_send_chat` **before** `_start_reply()`, so the very
+    first request carries the text; never move it into the worker.
+  - Matching is a casefolded substring over the user's text only - the model can
+    never steer what gets loaded, and only enabled+listed files exist to load.
+  - A path is read at most once per session (`self.lore` keyed by resolved path)
+    and loaded files stop being offered as tools (`_knowledge_tools` skips them).
+  - `LORE_MAX_TOTAL_CHARS` (60k) drops the oldest entries first. This changes the
+    prompt prefix and so invalidates backend prompt caching - accepted, and the
+    reason the cap exists; do not raise it casually.
+  - `always` entries load at mount (`_load_always_lore`), before the greeting.
 - **Smart autoscroll**: `_append` consults `_at_bottom()`; the view follows
   output only when you were already at the bottom, so scrolling up to reread
   sticks. Don't restore the unconditional `scroll_end`.

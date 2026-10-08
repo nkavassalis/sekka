@@ -9,22 +9,46 @@
     {
       "file": "knowledge/world.md",
       "description": "The Frostspire Marches: geography, factions, magic rules, tone and safety boundaries. Call this the FIRST time any setting rule, place, or faction is relevant, before answering.",
-      "enabled": true
+      "enabled": true,
+      "keywords": [
+        "cold art",
+        "frostweav",
+        "caer dhul",
+        "greywater",
+        "council",
+        "faction"
+      ]
     },
     {
       "file": "knowledge/seraine.md",
       "description": "Character card for Seraine Ashfoot, the frost-mage keeper of the Last Hearth tavern. Call whenever Seraine speaks, is addressed, or her backstory/motives come up.",
-      "enabled": true
+      "enabled": true,
+      "keywords": [
+        "seraine",
+        "tavern",
+        "last hearth"
+      ]
     },
     {
       "file": "knowledge/pock.md",
       "description": "Character card for Pock, one-armed toll smuggler of the Greywater lock. Call whenever Pock appears, is bargained with, or smuggling/Blackwater customs come up.",
-      "enabled": true
+      "enabled": true,
+      "keywords": [
+        "pock",
+        "smuggl",
+        "toll",
+        "customs"
+      ]
     },
     {
       "file": "knowledge/caer-dhul.md",
       "description": "Location brief for Caer Dhul, the frozen citadel town: key sites, curfew law, who runs what, and current rumors. Call when the scene is set in or moves to Caer Dhul.",
-      "enabled": true
+      "enabled": true,
+      "keywords": [
+        "caer dhul",
+        "curfew",
+        "citadel"
+      ]
     }
   ],
   "temperature": 0.9,
