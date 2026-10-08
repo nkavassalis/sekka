@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sekka"
 version = "0.1.0"
-description = "Sekka - a terminal (TUI) chat client for OpenAI-compatible LLM endpoints"
+description = "Sekka - a terminal (TUI) chat client for OpenAI-compatible LLM endpoints, servable in a browser"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+serve = ["textual-serve>=1.1"]
 
 [project.scripts]
 sekka = "sekka.cli:main"

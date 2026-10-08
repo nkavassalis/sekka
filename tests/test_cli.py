@@ -59,6 +59,8 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "--save-format", "markdown",
         "--autosave",
         "--remember",
+        "--serve-host", "0.0.0.0",
+        "--serve-port", "9000",
     ])
     assert box["overrides"] == {
         "endpoint": "http://h:8000/v1",
@@ -83,6 +85,8 @@ def test_every_flag_maps_to_its_config_key(monkeypatch):
         "repetition_penalty": 1.1,
         "stop": ["Player:", "GM:"],
         "remember": True,
+        "serve_host": "0.0.0.0",
+        "serve_port": 9000,
     }
 
 

@@ -95,14 +95,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="campaign file (system prompt, cast, lore, greeting) to play as",
     )
     parser.add_argument(
+        "run_mode",
+        nargs="?",
+        default="chat",
+        choices=["chat", "serve"],
+        metavar="chat|serve",
+        help="'chat' (default) runs in this terminal; 'serve' shows the same UI in"
+             " a browser at http://127.0.0.1:8484 (needs the 'serve' extra)",
+    )
+    parser.add_argument("--serve-host", dest="serve_host", help="address for 'sekka serve' (default 127.0.0.1)")
+    parser.add_argument("--serve-port", dest="serve_port", type=int, help="port for 'sekka serve' (default 8484)")
+    parser.add_argument("--serve-title", help="browser tab title for 'sekka serve'")
+    parser.add_argument(
+        "--serve-allow-public",
+        action="store_true",
+        help="let 'sekka serve' bind a non-loopback address (no auth: read the docs first)",
+    )
+    parser.add_argument(
         "--config",
         help="path to a config file (default: ./.sekka/config.json then ~/.sekka/config.json)",
     )
     return parser
 
 
+def split_passthrough(argv: Optional[list[str]]) -> tuple[list[str], list[str]]:
+    """Split argv on a bare `--`.
+
+    Everything before it is parsed normally; everything after it is forwarded
+    verbatim to each `sekka` process the web server spawns, so
+    `sekka serve -- --endpoint http://box:8000/v1` serves that endpoint.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--" not in argv:
+        return argv, []
+    cut = argv.index("--")
+    return argv[:cut], argv[cut + 1:]
+
+
 def main(argv: Optional[list[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    own_args, passthrough = split_passthrough(argv)
+    args = build_parser().parse_args(own_args)
     overrides = {
         "endpoint": args.endpoint,
         "model": args.model,
@@ -126,12 +158,26 @@ def main(argv: Optional[list[str]] = None) -> int:
         "save_format": args.save_format,
         "autosave": args.autosave,
         "remember": args.remember,
+        "serve_host": args.serve_host,
+        "serve_port": args.serve_port,
     }
     try:
         config = load_config(overrides, config_path=args.config, campaign_path=args.campaign)
     except ConfigError as exc:
         print(f"sekka: {exc}", file=sys.stderr)
         return 2
+
+    if args.run_mode == "serve":
+        from .serve import run_server
+
+        return run_server(
+            config,
+            host=args.serve_host,
+            port=args.serve_port,
+            title=args.serve_title,
+            extra_args=passthrough,
+            allow_public=args.serve_allow_public,
+        )
 
     from .tui import SekkaApp
 

@@ -46,6 +46,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "knowledge": [],
     "autosave": False,
     "remember": True,
+    "serve_host": "127.0.0.1",
+    "serve_port": 8484,
     "save_dir": ".",
     "save_format": "json",
     "labels": {"user": "You", "assistant": "Assistant"},
@@ -293,6 +295,14 @@ def validate_config(values: dict[str, Any]) -> None:
         not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout < 0
     ):
         raise ConfigError("Config 'request_timeout' must be null, 0 (wait forever), or a positive number.")
+
+    host = values.get("serve_host")
+    if not isinstance(host, str) or not host.strip():
+        raise ConfigError("Config 'serve_host' must be a non-empty host or address.")
+
+    port = values.get("serve_port")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ConfigError("Config 'serve_port' must be an integer port between 1 and 65535.")
 
     if not isinstance(values.get("remember"), bool):
         raise ConfigError("Config 'remember' must be true or false.")

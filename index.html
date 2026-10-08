@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sekka — chat with your own language model from the terminal</title>
-<meta name="description" content="Sekka is a small terminal chat client for any OpenAI-compatible endpoint: vLLM, llama.cpp, Ollama, LM Studio. Model discovery, resumable sessions, knowledge files as tools, and a timing line after every reply.">
+<title>Sekka — chat with your own language model, in the terminal or the browser</title>
+<meta name="description" content="Sekka is a small terminal chat client for any OpenAI-compatible endpoint: vLLM, llama.cpp, Ollama, LM Studio. Model discovery, resumable sessions, knowledge files as tools, roleplaying tools, and the same screen in a browser.">
 <link rel="canonical" href="https://sekka.org/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Sekka">
@@ -71,7 +71,7 @@
 <main>
 
 <h1>sekka<span class="kanji" lang="ja">雪華</span></h1>
-<p class="lede">A terminal chat client for the language model running on your own machine, or on
+<p class="lede">A chat client for the language model running on your own machine, or on
 anything else that speaks the OpenAI API: vLLM, llama.cpp's server, Ollama, LM Studio. Point it
 at an endpoint and start typing.</p>
 
@@ -99,6 +99,7 @@ reply took, and how much of the context window you've used.</p>
 
 <h2>start</h2>
 <pre><code>pipx install git+https://github.com/nkavassalis/sekka.git
+pipx inject sekka textual-serve        # optional: browser mode (sekka serve)
 sekka --endpoint http://my-gpu-box:8000/v1</code></pre>
 <p>If you don't name a model, Sekka asks the endpoint which ones it serves and lets you pick (or
 just uses it, if there's only one). Settings can come from flags, environment variables or a
@@ -129,6 +130,12 @@ newer, and nothing heavier than Textual and Requests: the endpoint does the real
   dice, and puts the result into the model's context - so it can narrate the failure
   but cannot quietly fudge the number. <code>/ooc</code> and <code>ctrl+o</code> handle
   talking to the table rather than the character.</dd>
+  <dt>The same screen, in a browser</dt>
+  <dd><code>sekka serve</code> runs a real terminal session behind a local web page
+  (default <code>127.0.0.1:8484</code>) - each browser tab gets its own chat, and the
+  rendering is the terminal's own, so nothing is missing. Handy on a machine where
+  you would rather not open a terminal, or for showing someone else their scenario.
+  Loopback-only unless you say otherwise, because there is no auth.</dd>
   <dt>A running state that survives the long game</dt>
   <dd><code>/note</code> pins a short block - inventory, injuries, promises, the
   state of the door - into every request, so it outlives summarising and it is
