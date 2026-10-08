@@ -135,7 +135,10 @@ newer, and nothing heavier than Textual and Requests: the endpoint does the real
   (default <code>127.0.0.1:8484</code>) - each browser tab gets its own chat, and the
   rendering is the terminal's own, so nothing is missing. Handy on a machine where
   you would rather not open a terminal, or for showing someone else their scenario.
-  Loopback-only unless you say otherwise, because there is no auth.</dd>
+  Loopback-only unless you say otherwise, because there is no auth.
+  <code>sekka serve --serve-readonly</code> is the version you hand to other
+  people: the whole roleplaying loop works, settings are locked, nothing is
+  written to disk.</dd>
   <dt>A running state that survives the long game</dt>
   <dd><code>/note</code> pins a short block - inventory, injuries, promises, the
   state of the door - into every request, so it outlives summarising and it is

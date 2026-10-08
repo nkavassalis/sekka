@@ -713,7 +713,9 @@ class SekkaApp(App):
         self._append(
             f"sekka - endpoint {self.config['endpoint']}"
             + (f" - model {model}" if model else " (no model selected)")
-            + "\nType /help for commands.",
+            + "\nType /help for commands."
+            + ("\nRead-only mode: settings are locked, nothing is written to disk."
+               if self._read_only else ""),
             "system",
         )
         self._remember_cli_flags()
@@ -731,8 +733,42 @@ class SekkaApp(App):
             self._load_always_lore()
             self._maybe_greet()
 
+    @property
+    def _read_only(self) -> bool:
+        return bool(self.config.get("readonly", False))
+
+    def _blocked(self, what: str) -> bool:
+        """True when `what` must not happen; tells the user why when it is refused."""
+        if not self._read_only:
+            return False
+        self._sys(
+            f"Read-only mode: {what} is disabled.\n"
+            "Chat, /roll, /ooc, /note, /undo, /edit, /regen, /swipe, /save all still work."
+        )
+        return True
+
+    def _show_read_only_summary(self) -> None:
+        """What /config becomes in read-only mode: facts, no fields, no secrets."""
+        cfg = self.config
+        campaign = cfg.campaign_path
+        lines = [
+            "Read-only mode (settings are locked):",
+            f"  endpoint: {cfg.get('endpoint') or '(not set)'}",
+            f"  model:    {cfg.get('model') or '(not selected)'}",
+            f"  campaign: {cfg.get('name') or (campaign.stem if campaign else '(none)')}",
+            f"  labels:   {cfg.get('labels', {}).get('user')} / "
+            f"{cfg.get('labels', {}).get('assistant')}",
+            f"  stream:   {'on' if cfg.get('stream') else 'off'}"
+            f"    context: {cfg.get('context_mode')}"
+            f"    thinking: {'shown' if cfg.get('show_reasoning') else 'hidden'}",
+            "  (the API key is never shown here; /play for the command cheat sheet)",
+        ]
+        self._sys("\n".join(lines))
+
     def _remember_cli_flags(self) -> None:
         """`sekka --endpoint URL` once per directory, then bare `sekka` works."""
+        if self._read_only:
+            return
         try:
             path, keys = remember_cli_values(self.config)
         except (ConfigError, OSError) as exc:
@@ -1467,7 +1503,7 @@ class SekkaApp(App):
         else:
             self._append(f"{assistant_label}:\n{shown}", "assistant")
         self._append(format_stats(last_elapsed, total_completion), "stats")
-        if self.config.get("autosave") and self.full_chat:
+        if self.config.get("autosave") and self.full_chat and not self._read_only:
             path = self._save_history(autosave=True)
             if path:
                 self._append(f"(autosaved to {path})", "stats")
@@ -1502,6 +1538,9 @@ class SekkaApp(App):
         elif command == "save":
             self._confirm_save()
         elif command == "config":
+            if self._read_only:
+                self._show_read_only_summary()
+                return
             self.push_screen(ConfigScreen(self.config), self._apply_config)
         elif command == "clear":
             for child in list(self._history().children):
@@ -1519,8 +1558,12 @@ class SekkaApp(App):
             self._set_notice("")
             self._sys("(history cleared)")
         elif command == "models":
+            if self._blocked("/models"):
+                return
             self._ensure_models(refresh=True)
         elif command == "knowledge":
+            if self._blocked("/knowledge"):
+                return
             self.push_screen(KnowledgeScreen(self.config))
         elif command == "thinking":
             self.action_toggle_thinking()
@@ -1656,21 +1699,26 @@ class SekkaApp(App):
             return
         self.config["note"] = text
         written = None
+        note_read_only = self._read_only
         try:
-            if text and self.config.campaign_path is not None:
+            if text and self.config.campaign_path is not None and not note_read_only:
                 written = save_campaign_values(self.config, {"note": text})
-            if written is None:
+            if written is None and not note_read_only:
                 save_config(self.config)
         except (OSError, ConfigError) as exc:
             self._sys(f"Note set for this session, but could not save it: {exc}", error=True)
             return
         self._update_ctx_label()
         if not text:
-            self._sys("(pinned note cleared)")
+            self._sys("(pinned note cleared)" + (" - it was not persisted" if note_read_only else ""))
+        elif note_read_only:
+            self._sys(f"Pinned note set for this session only (read-only mode does not write files):\n{text}")
         else:
             self._sys(f"Pinned note {'saved to ' + str(written) if written else 'saved'}:\n{text}")
 
     def _confirm_save(self) -> None:
+        if self._blocked("/save"):
+            return
         if not self.full_chat:
             self._sys("Nothing to save.")
             return
@@ -1842,6 +1890,8 @@ class SekkaApp(App):
                 )
             return
         path = self.config.resolve_path(arg)
+        if self._blocked("switching campaigns"):
+            return
         if not path.is_file():
             self._sys(f"No campaign file at {path}", error=True)
             return
@@ -1851,6 +1901,12 @@ class SekkaApp(App):
         self._update_ctx_label()
 
     def _open_resume_picker(self) -> None:
+        if self._read_only:
+            self._sys(
+                "Read-only mode: the session picker lists everyone's saved chats, so it is "
+                "disabled. Ask the host to resume a session for you."
+            )
+            return
         directory = Path(self.config.get("save_dir", ".")).expanduser()
         sessions = storage.list_sessions(directory)
         if not sessions:

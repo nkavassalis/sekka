@@ -193,6 +193,27 @@ never volunteers them. Each has a CLI flag (`--top-p`, `--stop`, ...) and a fiel
 in `/config`. A campaign may carry them too, so a scenario can ask for a hotter
 sampler and get it.
 
+### Read-only mode (`readonly`, `--readonly`, `serve --serve-readonly`)
+
+For sessions you did not configure yourself - a served tab given to another
+player, a shared machine, someone else poking your endpoint. Everything about
+*playing* keeps working: chat, `/roll`, `/ooc`, `/note`, `/undo`, `/edit`,
+`/regen`, `/swipe`, `/stop`, `/thinking`, `/play`. What is refused:
+
+| Blocked | Why |
+| --- | --- |
+| `/config` (form) | replaced by a summary; the API key is never shown |
+| `/models` | picking a model writes the config file |
+| `/knowledge` | edits lore, and lore is prompt content |
+| `/campaign <file>` | a different campaign is a different system prompt |
+| `/save`, autosave | read-only means no files written |
+| resume picker (`-r`) | it lists everyone's saved sessions |
+| remembering `--endpoint`/`--model` | no writes |
+
+`/note` is allowed and kept in memory only - it does not touch the campaign file,
+and the session tells you so. A host-specified `--resume FILE` is honoured: that
+was the host's own choice.
+
 ### Browser server (`sekka serve`)
 
 `sekka serve` needs the optional extra: `pip install 'sekka[serve]'`, or
@@ -319,6 +340,7 @@ according to `context_mode`:
 | `player`          | string          | `""`                          | Your character, appended to the system prompt |
 | `note`            | string          | `""`                          | Pinned running state, sent last; `/note` edits it |
 | `remember`        | bool            | `true`                        | Write `--endpoint`/`--model` into the local config file |
+| `readonly`        | bool            | `false`                       | Play only: no settings edits, no file writes |
 | `serve_host`      | string          | `"127.0.0.1"`                 | Bind address for `sekka serve` |
 | `serve_port`      | int             | `8484`                        | Port for `sekka serve` |
 | `top_p`             | float \| null   | `null` (endpoint)             | Nucleus sampling cutoff (0-1) |

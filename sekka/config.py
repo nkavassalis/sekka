@@ -46,6 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "knowledge": [],
     "autosave": False,
     "remember": True,
+    "readonly": False,
     "serve_host": "127.0.0.1",
     "serve_port": 8484,
     "save_dir": ".",
@@ -303,6 +304,9 @@ def validate_config(values: dict[str, Any]) -> None:
     port = values.get("serve_port")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ConfigError("Config 'serve_port' must be an integer port between 1 and 65535.")
+
+    if not isinstance(values.get("readonly"), bool):
+        raise ConfigError("Config 'readonly' must be true or false.")
 
     if not isinstance(values.get("remember"), bool):
         raise ConfigError("Config 'remember' must be true or false.")

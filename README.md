@@ -64,7 +64,8 @@ can put the identical screen in a browser instead.
   behaviour when the window fills: pause, roll old messages out, or compact
   them into a summary
 - **Browser mode** (`sekka serve`): the same terminal session, streamed to a
-  page - not a rewritten web front end
+  page - not a rewritten web front end, with `--serve-readonly` for tabs you hand
+  to other people
 
 ## Install
 
@@ -121,6 +122,8 @@ sekka [options]
 --repetition-penalty F repetition penalty (vLLM/llama.cpp extension)
 --stop SEQ             stop sequence; repeat the flag for several
 --remember             remember --endpoint/--model (--remember / --no-remember)
+--readonly             play without being able to change or write anything
+--serve-readonly       shorthand for `serve -- --readonly`
 --save-dir DIR         where /save and autosave write files
 --save-format FMT      json|markdown
 --autosave             auto-save after every reply (--no-autosave to force off)
@@ -148,7 +151,7 @@ file > defaults** - so one campaign can be pointed at any endpoint.
 |------------|-------------------------------------------------------------|
 | `/help`      | show commands and current key bindings                      |
 | `/save`      | save history to `sekka_YYYYMMDD_HHMMSS.json` (asks first)   |
-| `/config`    | open the configuration screen (saved to the config file)    |
+| `/config`    | configuration screen, saved to the config file              |
 | `/models`    | pick a model from the endpoint                              |
 | `/knowledge` | manage knowledge files offered to the model as tools        |
 | `/note`      | show / set / `+append` / clear the pinned running state    |
@@ -193,6 +196,24 @@ Before relying on it:
   whatever is on screen.
 - Config discovery follows the **server's** working directory, so run
   `sekka serve` from the folder whose campaign you want to play.
+
+### Read-only mode (handing a tab to someone else)
+
+```bash
+sekka --readonly                    # terminal
+sekka serve --serve-readonly        # every browser tab
+```
+
+Play freely, change nothing. Chat, `/roll`, `/ooc`, `/note`, `/undo`, `/edit`,
+`/regen`, `/swipe`, `/thinking` and `/play` all work; `/config` prints a summary
+instead of a form, and `/models`, `/knowledge`, `/campaign <file>`, `/save`, the
+resume picker and autosave are refused. Nothing is written to disk - no config,
+no campaign, no save files - and the API key is never displayed. `/note` still
+works but lasts only as long as the session, since persisting it would mean
+writing your campaign file.
+
+Useful beyond the browser: a kiosk-style machine, or letting a colleague prod
+your endpoint without being able to reconfigure it.
 
 ## Keys
 
