@@ -120,6 +120,16 @@ that already arrived, marked `[stopped]`; it also frees the editor immediately
 when the endpoint has gone quiet, though an abandoned request may still be
 finishing server-side. Streaming is skipped for the `/compact` summary call.
 
+### Turning the clock back (`/undo`, `/edit`, `/regen`, `/swipe`)
+
+Ate a wrong turn mid-scene? `/undo` deletes the last exchange, `/edit` puts your
+last message back in the input to fix and resend, and `/regen` asks for a
+different reply to the same prompt. `/regen` **keeps** every version it
+generated, and `/swipe` cycles through them; the version you are looking at is
+what gets saved and sent as context next, so you can audition openings and
+decide later. These edit the chat log, so autosave/`/save` follow them; the
+on-screen log is redrawn from the saved history after each one.
+
 ### Thinking & tool calls (`/thinking`, `ctrl+t`)
 
 Reasoning content (`reasoning_content`/`reasoning` in the API response) and

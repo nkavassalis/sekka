@@ -578,6 +578,9 @@ class SekkaApp(App):
         self._stream_widget: Optional[Static] = None  # live assistant line while streaming
         self._stream_text = ""
         self._thinking_reasoning_widget: Optional[Static] = None
+        self.turn_alts: list[str] = []  # generated versions of the last reply, for /swipe
+        self.alt_index = 0
+        self._regen_pending = False
         self.show_thinking = False  # ctrl+t / /thinking; always off at startup
         self._quit_arm = 0.0
         self.context_used = 0  # exact after a reply (usage), else estimate
@@ -714,6 +717,35 @@ class SekkaApp(App):
 
     def _history(self) -> VerticalScroll:
         return self.query_one("#history", VerticalScroll)
+
+    def _display_text(self, msg: dict[str, str]) -> tuple[str, str]:
+        """(text, css class) for one stored message, as it should appear."""
+        role, content = msg["role"], msg["content"]
+        labels = self.config["labels"]
+        if role == "user":
+            return f"{labels['user']}:\n{content}", "user"
+        if role == "assistant":
+            shown = content.strip("\n") if content.strip() else content
+            return f"{labels['assistant']}:\n{shown}", "assistant"
+        return f"(context note)\n{content}", "system"
+
+    def _rebuild_history(self) -> None:
+        """Redraw the visible log from full_chat in one batch (after edits/undo/resume)."""
+        history = self._history()
+        history.remove_children()
+        self.ui_lines = []
+        widgets = []
+        for msg in self.full_chat:
+            text, kind = self._display_text(msg)
+            self.ui_lines.append((kind, text))
+            widget = Static(text, classes=f"msg-{kind}", markup=False)
+            if kind in self.HIDDEN_KINDS:
+                widget.styles.display = "block" if self.show_thinking else "none"
+            widgets.append(widget)
+        if widgets:
+            history.mount(*widgets)  # one batch: resuming long sessions stays fast
+        history.scroll_end(animate=False)
+        self._update_ctx_label()
 
     def _at_bottom(self) -> bool:
         """True when the history view sits at the end (nothing left to read above)."""
@@ -908,6 +940,10 @@ class SekkaApp(App):
         self.full_chat.append({"role": "user", "content": text})
         user_label = self.config["labels"]["user"]
         self._append(f"{user_label}:\n{text}", "user")
+        self._start_reply()
+
+    def _start_reply(self) -> None:
+        """Generate a reply for whatever is currently at the end of the context."""
         self.busy = True
         self._start_thinking()
         self._chat_worker()
@@ -1211,6 +1247,12 @@ class SekkaApp(App):
             text = (text + " …[stopped]") if text.strip() else "[stopped - no output]"
         self.chat.append({"role": "assistant", "content": text})
         self.full_chat.append({"role": "assistant", "content": text})
+        if self._regen_pending:
+            self.turn_alts.append(text)
+            self._regen_pending = False
+        else:
+            self.turn_alts = [text]
+        self.alt_index = len(self.turn_alts) - 1
         # models often pad replies with blank lines; don't render them
         shown = text.strip("\n") if text.strip() else text
         if self._stream_widget is not None and self._stream_widget.is_mounted:
@@ -1261,6 +1303,8 @@ class SekkaApp(App):
             self.summary = ""
             self.lore.clear()
             self.autosave_path = None
+            self.turn_alts = []
+            self.alt_index = 0
             self.context_used = 0
             self.ui_lines.clear()
             self._set_notice("")
@@ -1273,8 +1317,74 @@ class SekkaApp(App):
             self.action_toggle_thinking()
         elif command == "stop":
             self.action_stop_generation()
+        elif command in ("undo", "edit", "regen", "swipe"):
+            self._turn_edit(command)
         elif command == "exit":
             self.exit()
+
+    def _drop_last_exchange(self) -> bool:
+        """Remove the trailing assistant reply and the user turn that provoked it."""
+        if not self.full_chat:
+            return False
+        if self.full_chat[-1]["role"] == "assistant":
+            self.full_chat.pop()
+            if self.chat and self.chat[-1]["role"] == "assistant":
+                self.chat.pop()
+        if self.full_chat and self.full_chat[-1]["role"] == "user":
+            self.full_chat.pop()
+            if self.chat and self.chat[-1]["role"] == "user":
+                self.chat.pop()
+        self.turn_alts = []
+        self.alt_index = 0
+        return True
+
+    def _turn_edit(self, command: str) -> None:
+        """/undo, /edit, /regen, /swipe: the loop RP users actually live in."""
+        if self.busy:
+            self.notify("Wait for (or stop with ctrl+x) the current reply.", severity="warning")
+            return
+        if command == "undo":
+            if not self._drop_last_exchange():
+                self._sys("Nothing to undo.", error=True)
+                return
+            self._rebuild_history()
+            self._sys("(last exchange removed)")
+        elif command == "edit":
+            last_user = next(
+                (m["content"] for m in reversed(self.full_chat) if m["role"] == "user"), None
+            )
+            if last_user is None:
+                self._sys("Nothing to edit yet.", error=True)
+                return
+            self._drop_last_exchange()
+            self._rebuild_history()
+            editor = self.query_one("#input", ChatInput)
+            editor.load_text(last_user)
+            lines = last_user.split("\n")
+            editor.cursor = (len(lines) - 1, len(lines[-1]))  # caret after the pasted text
+            self._sys("(last message back in the input - edit and press enter)")
+        elif command == "regen":
+            if not self.chat or self.chat[-1]["role"] != "assistant":
+                self._sys("Nothing to regenerate yet.", error=True)
+                return
+            if not self.turn_alts:
+                self.turn_alts = [self.chat[-1]["content"]]
+            self.chat.pop()
+            self.full_chat.pop()
+            self._rebuild_history()
+            self._regen_pending = True
+            self._set_notice(f"regenerating (keeping {len(self.turn_alts)} version(s))")
+            self._start_reply()
+        elif command == "swipe":
+            if len(self.turn_alts) < 2:
+                self._sys("Only one version of that reply exists. /regen to make another.")
+                return
+            self.alt_index = (self.alt_index + 1) % len(self.turn_alts)
+            text = self.turn_alts[self.alt_index]
+            self.chat[-1]["content"] = text
+            self.full_chat[-1]["content"] = text
+            self._rebuild_history()
+            self._set_notice(f"reply {self.alt_index + 1} of {len(self.turn_alts)}")
 
     def _confirm_save(self) -> None:
         if not self.full_chat:
@@ -1346,15 +1456,6 @@ class SekkaApp(App):
             return
         self.chat = copy.deepcopy(messages)
         self.full_chat = copy.deepcopy(messages)
-        labels = self.config["labels"]
-        for msg in messages:
-            role, content = msg["role"], msg["content"]
-            if role == "user":
-                self._append(f"{labels['user']}:\n{content}", "user")
-            elif role == "assistant":
-                self._append(f"{labels['assistant']}:\n{content}", "assistant")
-            else:
-                self._append(f"(restored context note)\n{content}", "system")
         # system notes never go mid-chat; fold them into the system prompt
         notes = [m["content"] for m in messages if m["role"] == "system"]
         self.chat = [m for m in self.chat if m["role"] != "system"]
@@ -1362,8 +1463,8 @@ class SekkaApp(App):
             self.summary = "\n\n".join(
                 n.replace("[Summary of earlier conversation]\n", "") for n in notes
             )
+        self._rebuild_history()
         self._sys(f"(resumed {len(messages)} messages from {path})")
-        self._update_ctx_label()
 
     def _open_resume_picker(self) -> None:
         directory = Path(self.config.get("save_dir", ".")).expanduser()
