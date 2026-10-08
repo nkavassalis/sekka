@@ -402,7 +402,7 @@ else. Diagnosis, in order, all observed rather than assumed:
    and `handle_index` never consults the request: a request with `Host:
    sekka.example.net:8443` still got `ws://127.0.0.1:8499/ws`, and
    `--serve-host 0.0.0.0` got `ws://0.0.0.0:8503/ws`. The reporter had opened
-   `10.1.13.45:8484`, i.e. neither of those.
+   an address on the player's own network, i.e. neither of those.
 
 Fix + evidence: sekka's own template (same-origin socket URL), unit cover in
 `tests/test_serve.py`, browser cover in `tests/test_serve_browser.py`. Verified by

@@ -67,7 +67,9 @@ def test_bad_port_is_a_config_error():
 def test_loopback_needs_no_warning_and_public_needs_one():
     for host in ("127.0.0.1", "localhost", "::1"):
         assert public_bind_warning(host) is None
-    for host in ("0.0.0.0", "10.1.13.99", "0.0.0.0"):
+    # TEST-NET addresses (RFC 5737): documentation space, routable nowhere, so the
+    # fixture cannot accidentally describe a real host on anyone's network.
+    for host in ("0.0.0.0", "198.51.100.7", "192.0.2.1"):
         warning = public_bind_warning(host)
         assert warning and "NO authentication" in warning
     assert "0.0.0.0" not in LOOPBACK_HOSTS
