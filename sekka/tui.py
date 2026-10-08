@@ -446,12 +446,29 @@ class KnowledgeScreen(ModalScreen[None]):
                 yield Button("browse", id="k_browse", variant="default")
             yield Label("Description - what is in it and when to use it (this is what convinces the model to call it)")
             yield Input(placeholder="Full policy for credit card processing at the clinic", id="k_desc")
+            yield Label("Trigger keywords - the file is loaded automatically when one appears in your message (comma separated, optional)")
+            yield Input(placeholder="tavern, seraine, cold art", id="k_keywords")
+            yield Checkbox("Always in context (skip the lookup entirely)", value=False, id="k_always")
             with Horizontal(id="k_close_row"):
                 yield Button("add", id="k_add", variant="primary")
                 yield Button("close", id="k_close", variant="default")
 
     def on_show(self) -> None:
         self._refresh_list()
+
+    @staticmethod
+    def _entry_summary(entry: dict[str, Any]) -> str:
+        """One-line description of an entry, with how it will reach the model."""
+        parts = [entry["description"][:60]] if entry["description"] else []
+        flags = []
+        if entry.get("always"):
+            flags.append("always in context")
+        keywords = entry.get("keywords") or []
+        if keywords:
+            flags.append("triggers: " + ", ".join(keywords[:4]) + ("…" if len(keywords) > 4 else ""))
+        if flags:
+            parts.append("[" + "; ".join(flags) + "]")
+        return "  ".join(parts) or "(no description)"
 
     # -------------------------------------------------------------- list mgmt
 
@@ -468,7 +485,7 @@ class KnowledgeScreen(ModalScreen[None]):
             scroll.mount(
                 Horizontal(
                     Checkbox(entry["file"].replace("[", "\\["), value=bool(entry["enabled"]), id=f"k_en_{i}"),
-                    Static(entry["description"][:60], classes="k_desc", markup=False),
+                    Static(self._entry_summary(entry), classes="k_desc", markup=False),
                     Button("x", id=f"k_rm_{i}", variant="error"),
                     classes="k_entry",
                 )
@@ -511,9 +528,21 @@ class KnowledgeScreen(ModalScreen[None]):
             if not self._path_ok(path):
                 self.notify("That file does not exist (path must be green).", severity="error")
                 return
-            self._entries().append({"file": path, "description": desc, "enabled": False})
-            self.query_one("#k_path", Input).value = ""
-            self.query_one("#k_desc", Input).value = ""
+            keywords = [
+                k.strip()
+                for k in self.query_one("#k_keywords", Input).value.split(",")
+                if k.strip()
+            ]
+            always = bool(self.query_one("#k_always", Checkbox).value)
+            entry: dict[str, Any] = {"file": path, "description": desc, "enabled": False}
+            if keywords:
+                entry["keywords"] = keywords
+            if always:
+                entry["always"] = True
+            self._entries().append(entry)
+            for widget_id in ("#k_path", "#k_desc", "#k_keywords"):
+                self.query_one(widget_id, Input).value = ""
+            self.query_one("#k_always", Checkbox).value = False
             self._refresh_list()
             self._persist()
         elif bid.startswith("k_rm_"):
@@ -665,6 +694,7 @@ class SekkaApp(App):
         elif self.resume:
             self._load_session(self.resume)
         else:
+            self._load_always_lore()
             self._maybe_greet()
 
     def _maybe_greet(self) -> None:
@@ -716,9 +746,10 @@ class SekkaApp(App):
         if self.summary:
             parts.append("[Summary of earlier conversation]\n" + self.summary)
         if self.lore:
-            parts.append(
-                "[Reference material already loaded]\n" + "\n\n".join(self.lore.values())
-            )
+            blocks = [
+                f"--- {Path(p).name} ---\n{text}" for p, text in self.lore.items()
+            ]
+            parts.append("[Reference material already loaded]\n" + "\n\n".join(blocks))
         return "\n\n".join(p for p in parts if p)
 
     def _used_estimate(self) -> int:
@@ -742,6 +773,51 @@ class SekkaApp(App):
             self.query_one("#ctx_status", Static).update(f" {self.ctx_label} ")
         except Exception:
             pass  # before mount
+
+    def _load_always_lore(self) -> None:
+        """Entries marked 'always' go into the context before the first message."""
+        loaded = []
+        for entry in self._enabled_knowledge():
+            if not entry.get("always"):
+                continue
+            path = str(self.config.resolve_path(entry["file"]))
+            if path in self.lore:
+                continue
+            text = self._read_knowledge_file(path)
+            if text.startswith("Error:"):
+                self._sys(f"Knowledge file {entry['file']} could not be read: {text}", error=True)
+                continue
+            self._load_into_lore(path, text)
+            loaded.append(Path(entry["file"]).name)
+        if loaded:
+            self._set_notice(f"always-on lore loaded: {', '.join(loaded)}")
+
+    def _trigger_lore(self, text: str) -> list[str]:
+        """Lorebook style: keywords in the player's message pull lore in.
+
+        Works on any model (no tool calling needed) and costs no extra round
+        trip, because the text joins the system prompt for this and later turns.
+        """
+        haystack = text.casefold()
+        loaded = []
+        for entry in self._enabled_knowledge():
+            keywords = [k for k in entry.get("keywords", []) if isinstance(k, str)]
+            if not keywords:
+                continue
+            path = str(self.config.resolve_path(entry["file"]))
+            if path in self.lore:
+                continue
+            if not any(keyword.casefold().strip() in haystack for keyword in keywords):
+                continue
+            content = self._read_knowledge_file(path)
+            if content.startswith("Error:"):
+                self._sys(f"Knowledge file {entry['file']} could not be read: {content}", error=True)
+                continue
+            self._load_into_lore(path, content)
+            loaded.append(Path(entry["file"]).name)
+        if loaded:
+            self._set_notice(f"lore loaded: {', '.join(loaded)}")
+        return loaded
 
     # ------------------------------------------------------------- ui helpers
 
@@ -970,6 +1046,7 @@ class SekkaApp(App):
         self.full_chat.append({"role": "user", "content": text})
         user_label = self.config["labels"]["user"]
         self._append(f"{user_label}:\n{text}", "user")
+        self._trigger_lore(text)  # before the request: triggered lore rides along
         self._start_reply()
 
     def _start_reply(self) -> None:
@@ -1014,6 +1091,19 @@ class SekkaApp(App):
 
     KNOWLEDGE_TOOL_ROUNDS = 8
     KNOWLEDGE_MAX_BYTES = 256_000
+    LORE_MAX_TOTAL_CHARS = 60_000  # cap on lore folded into the system prompt
+
+    def _enabled_knowledge(self) -> list[dict[str, Any]]:
+        return [e for e in self.config.get("knowledge", []) if e.get("enabled")]
+
+    def _load_into_lore(self, path: str, text: str) -> None:
+        """Remember reference material for the rest of the session (with a cap)."""
+        self.lore[path] = text
+        total = sum(len(v) for v in self.lore.values())
+        while total > self.LORE_MAX_TOTAL_CHARS and len(self.lore) > 1:
+            oldest = next(iter(self.lore))
+            total -= len(self.lore.pop(oldest))
+        self._update_ctx_label()
 
     def _knowledge_tools(self) -> tuple[list[dict[str, Any]], dict[str, str]]:
         """Build tool schemas from enabled knowledge entries.
@@ -1025,9 +1115,7 @@ class SekkaApp(App):
         schemas: list[dict[str, Any]] = []
         files: dict[str, str] = {}
         used: set[str] = set()
-        for i, entry in enumerate(self.config.get("knowledge", [])):
-            if not entry.get("enabled"):
-                continue
+        for i, entry in enumerate(self._enabled_knowledge()):
             path = str(self.config.resolve_path(entry["file"]).resolve())
             if path in self.lore:
                 continue  # already in the system context this session

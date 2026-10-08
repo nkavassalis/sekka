@@ -39,6 +39,9 @@ bots, and role playing games.
 - Knowledge files as tools: `/knowledge` turns process docs, character cards,
   or lore into read-only tools the model can consult (tool-calling models
   only; the model can never read files you didn't list)
+- **Lorebook triggers**: give a knowledge file keywords (or mark it *always*)
+  and it is pulled into context the moment the topic appears in your message -
+  no tool calling needed, no extra round trip, works on any model
 - Take-backs for collaborative storytelling: `/undo`, `/edit`, `/regen` and
   `/swipe` (multiple generated versions of a reply, cycled without losing them)
 - **Campaigns**: a `campaign.json` beside your config holds the system prompt,

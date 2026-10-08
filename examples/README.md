@@ -28,6 +28,10 @@ sekka --endpoint http://your-host:8000/v1
 - **Knowledge files are readable by the model** (only the ones you enable,
   and only via their fixed tools - sekka never lets the model name a file).
   Don't put real secrets in them.
+- **Character cards trigger on keywords** (the `keywords` field in
+  `campaign.json`): mention Seraine and her card is in context before the model
+  ever sees your message, with no tool call needed. The `description` still
+  matters for entries without keywords, which the model must look up itself.
 - The `description` fields in each config are deliberately written as
   "what's in here and when to reach for it" - that text is the only pitch
   the model hears before deciding to call the tool. Steal that style.

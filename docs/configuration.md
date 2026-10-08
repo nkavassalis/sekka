@@ -157,6 +157,33 @@ that already arrived, marked `[stopped]`; it also frees the editor immediately
 when the endpoint has gone quiet, though an abandoned request may still be
 finishing server-side. Streaming is skipped for the `/compact` summary call.
 
+### Lore that arrives on its own (`keywords`, `always`)
+
+A knowledge entry can carry two optional fields:
+
+```json
+{
+  "file": "knowledge/seraine.md",
+  "description": "Character card for Seraine Ashfoot",
+  "enabled": true,
+  "keywords": ["seraine", "tavern", "last hearth"]
+}
+```
+
+- **`keywords`** - the moment one appears in your message (case-insensitive
+  substring match), the file is read and appended to the system prompt, for that
+  turn and every later one. Sekka sends **one** request: the model never has to
+  think about looking it up, so this works on models without tool calling and
+  skips the tool round trip entirely. The status row shows `lore loaded: …` so
+  you can see the prompt grow.
+- **`always`** - skip the lookup: the file goes into context before the first
+  message. Use it for the rules of the world; use keywords for the cast.
+- A file is loaded at most once per session, whichever way it arrived, and
+  triggered files stop being offered as tools. Everything folded into the prompt
+  is capped at 60k characters, oldest entry first.
+- Keywords are matched against **your** messages only - the model cannot steer
+  what gets loaded, and it can still only ever read files you listed.
+
 ### Turning the clock back (`/undo`, `/edit`, `/regen`, `/swipe`)
 
 Ate a wrong turn mid-scene? `/undo` deletes the last exchange, `/edit` puts your
