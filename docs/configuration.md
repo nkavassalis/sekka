@@ -241,6 +241,14 @@ what gets saved and sent as context next, so you can audition openings and
 decide later. These edit the chat log, so autosave/`/save` follow them; the
 on-screen log is redrawn from the saved history after each one.
 
+### If a reply comes back empty
+
+Reasoning models can spend your whole `max_tokens` budget on thinking and leave
+no room for the answer. Sekka does not store a blank assistant turn in that case:
+it keeps your message and says why (`Empty reply (the model spent the whole reply
+budget on thinking - raise max tokens, or set reasoning to none)`). Leave
+`max_tokens` unset, or well above a few hundred, when using a thinking model.
+
 ### Thinking & tool calls (`/thinking`, `ctrl+t`)
 
 Reasoning content (`reasoning_content`/`reasoning` in the API response) and
