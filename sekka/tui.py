@@ -785,11 +785,17 @@ class SekkaApp(App):
         """What /config becomes in read-only mode: facts, no fields, no secrets."""
         cfg = self.config
         campaign = cfg.campaign_path
+        pack = getattr(cfg, "pack_dir", None)
+        playing = str(cfg.get("name") or (campaign.stem if campaign else "(none)"))
+        if pack is not None:
+            # Say which pack is in play and that it is read-only: a player who does not
+            # know that will otherwise wonder why /note did not stick.
+            playing += f" (pack {Path(str(pack)).name}, read-only)"
         lines = [
             "Read-only mode (settings are locked):",
             f"  endpoint: {cfg.get('endpoint') or '(not set)'}",
             f"  model:    {cfg.get('model') or '(not selected)'}",
-            f"  campaign: {cfg.get('name') or (campaign.stem if campaign else '(none)')}",
+            f"  campaign: {playing}",
             f"  labels:   {cfg.get('labels', {}).get('user')} / "
             f"{cfg.get('labels', {}).get('assistant')}",
             f"  stream:   {'on' if cfg.get('stream') else 'off'}"

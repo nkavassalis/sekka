@@ -7,10 +7,11 @@ def captured_main(monkeypatch, argv):
     """Run cli.main with load_config/SekkaApp/run_server stubbed; return overrides + path."""
     box = {}
 
-    def fake_load(overrides, config_path=None, campaign_path=None):
+    def fake_load(overrides, config_path=None, campaign_path=None, pack=None):
         box["overrides"] = overrides
         box["config_path"] = config_path
         box["campaign_path"] = campaign_path
+        box["pack"] = pack
         return object()
 
     class FakeApp:
@@ -232,3 +233,150 @@ def test_serve_public_url_reaches_the_server(monkeypatch):
     box = captured_main(monkeypatch, ["serve", "--serve-public-url",
                                       "https://play.example.net/sekka"])
     assert box["served"]["public_url"] == "https://play.example.net/sekka"
+
+
+# ----------------------------------------------------------- pack verb surface
+
+
+def fake_pack_box(monkeypatch, **overrides):
+    """Stub sekka.packs so cli pack commands can be tested without touching disk."""
+    box = {"calls": [], **overrides}
+
+    def record(name, result):
+        def run(*args, **kwargs):
+            box["calls"].append((name, args, kwargs))
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        return run
+
+    import sekka.packs as packs
+
+    for name, result in box.pop("stubs", {}).items():
+        monkeypatch.setattr(packs, name, record(name, result))
+    monkeypatch.setattr(packs, "packs_dir", lambda override=None: __import__("pathlib").Path("/tmp/packs"))
+    return box
+
+
+def test_pack_list_with_nothing_installed(monkeypatch, capsys):
+    monkeypatch.setattr("sekka.packs.list_packs", lambda root=None: [])
+    assert cli.main(["pack", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "No packs installed" in out and "install" in out
+
+
+def test_pack_list_prints_one_line_per_pack(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sekka.packs.list_packs",
+        lambda root=None: [
+            {
+                "name": "frostspire",
+                "title": "The Frostspire Marches",
+                "knowledge": [{"file": "knowledge/world.md", "enabled": True}],
+                "error": "",
+            }
+        ],
+    )
+    assert cli.main(["pack", "list"]) == 0
+    out = capsys.readouterr().out
+    assert "frostspire" in out and "The Frostspire Marches" in out and "1 lore files" in out
+
+
+def test_pack_install_reports_the_name_to_type(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sekka.packs",
+        type("P", (), {
+            "install": staticmethod(lambda source, name=None, force=False: {
+                "name": "frostspire", "title": "The Frostspire Marches",
+                "path": __import__("pathlib").Path("/tmp/packs/frostspire"), "warnings": [],
+            }),
+            "PackError": __import__("sekka.packs", fromlist=["PackError"]).PackError,
+        }),
+        raising=False,
+    )
+    assert cli.main(["pack", "install", "examples/frostspire"]) == 0
+    out = capsys.readouterr().out
+    assert "--pack frostspire" in out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pack"],
+        ["pack", "wat"],
+        ["pack", "install"],
+        ["pack", "install", "a", "b"],
+        ["pack", "list", "extra"],
+        ["pack", "remove"],
+        ["pack", "show"],
+    ],
+)
+def test_bad_pack_commands_exit_2_with_pack_usage(argv, capsys):
+    assert cli.main(argv) == 2
+    err = capsys.readouterr().err
+    assert "sekka pack" in err               # pack usage, not the global argparse dump
+    assert "--serve-port" not in err          # and no nonsense about serve flags
+
+
+def test_pack_verbs_reject_serve_flags(capsys):
+    """A pack command never starts a session, so serve flags there are a typo."""
+    for argv in (["pack", "install", "x", "--serve-port", "9"], ["--serve-port", "9", "pack", "list"]):
+        assert cli.main(argv) == 2
+        err = capsys.readouterr().err
+        assert "--serve-port" in err and "sekka serve" in err
+
+
+def test_pack_name_and_force_only_mean_something_with_pack(capsys):
+    assert cli.main(["--name", "x", "--force", "chat"]) == 2
+    assert "pack" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [["install", "examples/frostspire"], ["packs"], ["remove", "x"]])
+def test_a_bare_pack_verb_is_still_rejected(argv, capsys):
+    """`sekka install x` must not quietly work: the verb is `sekka pack install x`."""
+    with pytest.raises(SystemExit) as stop:      # argparse refuses the mode word
+        cli.main(argv)
+    assert stop.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err.lower()
+
+
+def test_pack_flag_is_passed_to_the_loader(monkeypatch):
+    box = {}
+
+    def fake_load(overrides, config_path=None, campaign_path=None, pack=None):
+        box["pack"] = pack
+        box["campaign"] = campaign_path
+        return object()
+
+    monkeypatch.setattr(cli, "load_config", fake_load)
+    monkeypatch.setattr("sekka.tui.SekkaApp", lambda config, resume=None: type("A", (), {"run": lambda self: None})())
+    assert cli.main(["--pack", "frostspire"]) == 0
+    assert box["pack"] == "frostspire" and box["campaign"] is None
+
+
+def test_pack_and_campaign_together_are_refused(monkeypatch, capsys):
+    """Two scenarios in play at once is never what anyone wanted; the loader says so."""
+    from sekka.config import ConfigError
+
+    def refuse(*args, **kwargs):
+        raise ConfigError("A pack and a campaign file both pick the scenario, and only one can win.")
+
+    monkeypatch.setattr(cli, "load_config", refuse)
+    assert cli.main(["--pack", "frostspire", "--campaign", "c.json"]) == 2
+    assert "only one can win" in capsys.readouterr().err
+
+
+def test_serve_forwards_the_scenario_to_each_tab(monkeypatch):
+    box = {}
+
+    def fake_run_server(config, *, host=None, port=None, title=None, extra_args=(),
+                        allow_public=False, public_url=None):
+        box["extra_args"] = list(extra_args)
+        return 0
+
+    monkeypatch.setattr(cli, "load_config", lambda *a, **k: object())
+    monkeypatch.setattr("sekka.serve.run_server", fake_run_server)
+    cli.main(["serve", "--pack", "frostspire"])
+    args = box["extra_args"]
+    assert args[:2] == ["--pack", "frostspire"]      # each tab re-parses this

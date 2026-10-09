@@ -58,6 +58,10 @@ can put the identical screen in a browser instead.
   role labels, lore files, an opening scene and your character, so a scenario is
   one folder you `cd` into and play. Saved sessions remember their campaign and
   resume as themselves
+- **Campaign packs**: `sekka pack install` takes a campaign folder (or archive) and
+  `sekka --pack NAME` plays it from any directory - lore paths resolve against the
+  pack, so nothing silently goes missing. Installed packs are read-only; `sekka pack
+  fork` gives you a copy to rewrite and take notes in
 - Optional thinking overlay (`/thinking`, `ctrl+t`) shows the model's
   reasoning and tool calls - hidden by default
 - Context meter in the corner of the editor (`45k/262k`) with configurable
@@ -94,15 +98,30 @@ are remembered - never `--api-key` - and `--no-remember` opts out. If you keep a
 
 Type and press **enter**. `/help` lists the in-chat commands.
 
-Pointing at a folder that contains a `campaign.json` (see
-[`examples/roleplaying/`](examples/)) makes that the scenario you are playing:
-`sekka --endpoint http://your-llm-server:8000/v1` inside it is enough.
+Pointing at a scenario makes that what you are playing. The shipped example is a
+campaign pack - a game-master prompt, an opening scene, a character, and four lore
+files the model looks up as tools ([`examples/frostspire/`](examples/frostspire/),
+with [setup notes](examples/frostspire/README.md)):
+
+```bash
+sekka pack install examples/frostspire
+sekka --pack frostspire --endpoint http://your-llm-server:8000/v1
+```
+
+`--pack` is what lets you play it from anywhere. A plain `campaign.json` works too
+(`sekka --campaign FILE`, or `cd` into the folder), but its lore paths resolve relative
+to where you ran the command from, so playing one from elsewhere loads the prompt and
+none of the lore. See [`examples/README.md`](examples/README.md).
 
 ## Usage
 
 ```
 sekka [options]
+sekka serve [serve options]
+sekka pack <list|show|install|remove|fork>
 
+--pack NAME|DIR        play an installed pack (or a pack directory) from anywhere
+--campaign FILE        play one campaign file, without installing it as a pack
 --endpoint URL         OpenAI-compatible base URL, e.g. http://host:8000/v1
 --model  MODEL         model id (omit to pick from the endpoint's /models)
 --system  TEXT         system prompt

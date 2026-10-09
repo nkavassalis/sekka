@@ -103,6 +103,42 @@ Hard-won context for anyone (human or agent) working on this repo. Ordered by
 
 ## Decisions (and why)
 
+- **Campaign packs are installed copies, and read-only in play.** `sekka pack install`
+  copies rather than symlinks: `/note` writes play state into the campaign file, so a pack
+  shared between sessions - or written back into the checkout it came from - would be a
+  bug, not a feature. Installed packs and packs inside a git working tree refuse campaign
+  writes via `packs.write_blocked_reason()`, enforced in `save_campaign_values()` where all
+  campaign writes funnel. `sekka pack fork NAME DIR` gives a writable copy with the install
+  manifest stripped. The example's `note` ships empty for the same reason; a test enforces
+  it, because a shipped note opens a stranger's game mid-sentence.
+- **The reason packs exist**: `Config.pack_dir` makes `base_dir` the pack root, so
+  `knowledge/world.md` resolves from any cwd and a decoy `knowledge/` in the cwd loses.
+  A plain campaign file in the shipped layout (`.sekka/campaign.json`, lore beside it)
+  resolves lore only when the cwd is the pack root; from anywhere else the prompt and
+  greeting load and the lore silently does not. That silent half-load is what `--pack` kills.
+- **A pack fills the campaign layer** - beats a config file's `campaign` key, loses to
+  CLI/env, exactly like `campaign.json`, so one pack runs against any endpoint.
+  `--pack` together with `--campaign` is refused rather than tie-broken. `--pack` (and
+  `--campaign`/`--config`) is forwarded into the per-tab command in `cli.main()`:
+  textual-serve re-parses the command line per websocket, so a non-forwarded flag serves
+  a generic chat while the command line claims a scenario.
+- **`sekka pack install` accepts paths, never URLs**, and the error says why. Fetching
+  packs on demand turns "install this" into "run whatever that server sent"; packs are a
+  handful of text files, so `scp` is the distribution mechanism.
+- **Install is the validation gate, containment included.** `packs.check_pack()` demands
+  that every *enabled* lore file exist, be `.md`/`.txt`, and stay inside the pack root;
+  absolute paths and `..` escapes are refused even though `validate_campaign()` permits
+  them (the containment rule is a packs.py rule, not a config rule - do not assume the
+  validator sandboxes paths, it validates shapes). Disabled lore only warns. Archives go
+  through `_safe_member()`: no absolute paths, no `..`, no symlinks/devices, caps of 2000
+  entries and 64 MB.
+- **`sekka pack <verb> [<operand>]` is hand-validated** (`cli.pack_usage_error()`), same
+  reasoning as the `--serve-*` guard: argparse subparsers would swallow unknown flags and
+  emit a usage dump about the wrong thing. The mode word is still a hard
+  `choices=["chat","serve","pack"]`, so `sekka install x` cannot quietly "work". Pack
+  verbs never start a session, so `--serve-*` beside them is refused by the existing
+  guard, and `--name`/`--force` outside a pack verb are refused rather than ignored.
+
 - **Textual** over prompt_toolkit/urwid: scrollback + TextArea + CSS.
 - **Non-streaming**: wall-clock timing + authoritative `usage` tokens is
   simpler; spinner shows `❄  Ns` (glyph cycles ❄❅❆❅, two spaces, no dots).
@@ -442,7 +478,7 @@ but nothing here actually ran one).
 
 - Dev endpoint URL/model and local overrides go in `.sekka/config.json`
   (auto-discovered, gitignored). See `LOCAL.md`.
-- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 253 tests, all
+- Tests: `.venv/bin/python -m pytest tests/ -q` (Textual Pilot; 306 tests, all
   should pass in ~120 s - the SSE tests sleep deliberately). `conftest.py` keeps
   tests off the real config/network. The fresh venv needs `pip install -e '.[dev]'`
   **and** `pip install 'textual-serve>=1.1'`: without the serve extra,
@@ -455,6 +491,37 @@ but nothing here actually ran one).
   what makes them regression cover for the bind-address bug instead of a
   localhost-only smoke test.
 - Tests must not name real internal services: one captive-portal test used to
-  embed a real dashboard name; use generic stand-ins.
+  embed a real dashboard name; use generic stand-ins. Same rule for the tracked
+  tree as a whole: `tests/test_repo_hygiene.py` fails the suite on RFC 1918 /
+  link-local / ULA addresses in any tracked file, so fixtures use RFC 5737
+  documentation space (192.0.2.0/24, 198.51.100.0/24) and docs use localhost or
+  placeholders. The dev endpoint lives in `LOCAL.md` (gitignored) only.
+  Two live leaks shipped in 2026-10 before this guard existed; the owner chose to
+  leave them in git history rather than rewrite it — that is settled, do not
+  "fix" it again.
 - A working tree once mysteriously lost files; recovery was via
   `git commit-tree` against known-good trees. Backup routine: see `LOCAL.md`.
+
+## Campaign packs (added 2026-10)
+
+- `sekka/packs.py` owns packs; `sekka/cli.py` owns the `pack` verb
+  (`list`/`show`/`install`/`remove`/`fork`); `sekka/config.py` takes the `pack=`
+  argument, sets `Config.pack_dir`, and points `base_dir` at the pack root.
+  Tests: `tests/test_packs.py`. CLI surface: `tests/test_cli.py` (pack verbs).
+- A pack is a directory holding `campaign.json` or `.sekka/campaign.json`, with
+  `knowledge/` beside it. `examples/frostspire/` is the shipped one (renamed from
+  `examples/roleplaying/`, which was byte-identical; the rename is why the git
+  history of that folder looks unremarkable).
+- **Installed packs and packs inside a git working tree are read-only.** The rule
+  lives in `packs.write_blocked_reason()` and fires inside `save_campaign_values()`,
+  so `/note`, `/config` and `/save` all refuse through one choke point. Never move
+  that check up into the UI: the campaign half of `/save` and the note write are
+  separate calls, and both can be reached from screens this check would not see.
+- `packs.check_pack()` is the containment gate (relative paths only, `.md`/`.txt`,
+  must resolve inside the pack root). `validate_campaign()` does **not** sandbox
+  paths; do not assume lore paths are safe because a validator ran.
+- `sekka pack install` never fetches. No `--url`, no `--from-git`, no follow-up
+  flag: a URL-taking install is a supply chain, and this tool is often run against
+  someone else's inference box.
+- `SEKKA_PACKS_DIR` redirects the pack root (tests use it; do not hardcode
+  `~/.sekka/packs` anywhere except `packs.packs_dir()`).

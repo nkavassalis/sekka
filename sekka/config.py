@@ -23,6 +23,7 @@ ENV_MODEL = "SEKKA_MODEL"
 ENV_API_KEY = "SEKKA_API_KEY"
 ENV_CONFIG = "SEKKA_CONFIG"
 ENV_CAMPAIGN = "SEKKA_CAMPAIGN"
+ENV_PACK = "SEKKA_PACK"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "endpoint": "http://localhost:8000/v1",
@@ -141,6 +142,7 @@ class Config:
         env_keys: Optional[set[str]] = None,
         campaign_path: Optional[Path] = None,
         campaign_keys: Optional[set[str]] = None,
+        pack_dir: Optional[Path] = None,
     ) -> None:
         self.values = values
         self.path = path
@@ -150,6 +152,10 @@ class Config:
         self.file_values = file_values or {}
         self.campaign_path = campaign_path
         self.campaign_keys = campaign_keys or set()
+        # Set when a pack supplied the campaign: the pack directory, kept so /save can
+        # refuse to write play state into a shared pack and the header can say where
+        # the scenario came from.
+        self.pack_dir = pack_dir
 
     @property
     def overridden(self) -> set[str]:
@@ -159,6 +165,9 @@ class Config:
     @property
     def base_dir(self) -> Path:
         """What relative paths (knowledge files) are resolved against."""
+        if self.pack_dir is not None:
+            # A pack owns its own lore files; the launch directory is nobody's business.
+            return Path(self.pack_dir)
         if self.campaign_path is not None:
             return self.campaign_path.parent
         if self.path is not None:
@@ -467,13 +476,36 @@ def load_config(
     cli_overrides: Optional[dict[str, Any]] = None,
     config_path: Optional[str] = None,
     campaign_path: Optional[str] = None,
+    pack: Optional[str] = None,
 ) -> Config:
     """Build the effective configuration from all layers.
 
-    Precedence: CLI flags > environment > campaign file > config file > defaults,
+    Precedence: CLI flags > environment > pack or campaign file > config file > defaults,
     so the same campaign can be pointed at another endpoint from the shell.
+
+    ``pack`` names an installed pack or points at a pack directory. A pack is a campaign
+    plus the lore files it references, so it fills the same layer a campaign file does:
+    it beats a ``campaign`` key in the config file, and combining it with ``--campaign``
+    is refused rather than resolved by precedence, because two scenarios in play at once
+    is never what anyone wanted.
     """
     values = copy.deepcopy(DEFAULT_CONFIG)
+
+    pack_dir: Optional[Path] = None
+    pack_spec = pack or os.environ.get(ENV_PACK)
+    if pack_spec and (campaign_path or os.environ.get(ENV_CAMPAIGN)):
+        raise ConfigError(
+            "A pack and a campaign file both pick the scenario, and only one can win. "
+            "Drop one of them - a pack is a campaign plus the lore files it references."
+        )
+    if pack_spec:
+        from . import packs
+
+        found = packs.resolve_pack_dir(str(pack_spec))
+        campaign_file = packs.campaign_file_for(found)
+        pack_dir = packs.pack_base_dir(found)
+        packs.check_pack(campaign_file, base=pack_dir)   # fail here, not mid-scene
+        campaign_path = str(campaign_file)
 
     path = find_config_file(config_path)
     file_values: dict[str, Any] = {}
@@ -523,6 +555,7 @@ def load_config(
         env_keys=env_keys,
         campaign_path=campaign,
         campaign_keys=set(campaign_values) - cli_keys - env_keys,
+        pack_dir=pack_dir,
     )
 
 
@@ -598,6 +631,12 @@ def save_campaign_values(config: Config, values: dict[str, Any]) -> Optional[Pat
     """
     if config.campaign_path is None or not values:
         return None
+    if getattr(config, "pack_dir", None) is not None:
+        from . import packs
+
+        blocked = packs.write_blocked_reason(config.pack_dir)
+        if blocked:
+            raise ConfigError(blocked)
     path = config.campaign_path
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

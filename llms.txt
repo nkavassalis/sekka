@@ -12,7 +12,7 @@
 - [README (raw Markdown)](https://raw.githubusercontent.com/nkavassalis/sekka/main/README.md): features, install, usage, slash commands, key bindings.
 - [Configuration reference](https://sekka.org/docs/configuration.md): every CLI flag, environment variable and config-file key.
 - [AGENTS.md (raw Markdown)](https://raw.githubusercontent.com/nkavassalis/sekka/main/AGENT.md): an agent-oriented map of the codebase.
-- [Roleplaying examples](https://github.com/nkavassalis/sekka/tree/main/examples/roleplaying): character cards, world lore and location briefs exposed as tools.
+- [Campaign pack example](https://github.com/nkavassalis/sekka/tree/main/examples/frostspire): a tabletop campaign as an installable pack - character cards, world lore and location briefs exposed as tools.
 - [Workflow knowledge-base example](https://github.com/nkavassalis/sekka/tree/main/examples/medical-practice): a hypothetical clinic's front-desk SOPs the model consults step by step.
 
 ## What it is, briefly
