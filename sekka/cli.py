@@ -107,13 +107,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="campaign file (system prompt, cast, lore, greeting) to play as",
     )
     parser.add_argument(
+        "--pack",
+        metavar="NAME|DIR",
+        help="play an installed pack by name, or a pack directory without installing it"
+             " (beats the config's campaign; conflicts with --campaign)",
+    )
+    parser.add_argument(
         "run_mode",
         nargs="?",
         default="chat",
-        choices=["chat", "serve"],
-        metavar="chat|serve",
+        choices=["chat", "serve", "pack"],
+        metavar="chat|serve|pack",
         help="'chat' (default) runs in this terminal; 'serve' shows the same UI in"
-             " a browser at http://127.0.0.1:8484 (needs the 'serve' extra)",
+             " a browser at http://127.0.0.1:8484 (needs the 'serve' extra);"
+             " 'pack' manages installed campaign packs",
+    )
+    parser.add_argument(
+        "pack_args",
+        nargs="*",
+        default=[],
+        metavar="pack <command> ...",
+        help="with 'pack': list | show NAME | install SRC | remove NAME | fork NAME [DIR]",
+    )
+    parser.add_argument("--name", dest="pack_name", help="with 'pack install': pack name to use")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="with 'pack install' replace an installed pack of the same name;"
+             " with 'pack remove' discard a pack that still holds play state;"
+             " with 'pack fork' overwrite the destination",
     )
     parser.add_argument("--serve-host", dest="serve_host", help="address for 'sekka serve' (default 127.0.0.1)")
     parser.add_argument("--serve-port", dest="serve_port", type=int, help="port for 'sekka serve' (default 8484)")
@@ -175,6 +197,125 @@ def serve_mode_error(args: argparse.Namespace) -> Optional[str]:
     )
 
 
+PACK_USAGE = """usage: sekka pack <command>
+  sekka pack list                                  installed packs
+  sekka pack show NAME                             what a pack holds and where it lives
+  sekka pack install SRC [--name NAME] [--force]   from a directory, .tar.gz, .tar or .zip
+  sekka pack remove NAME [--force]                 delete an installed pack
+  sekka pack fork NAME [DIR] [--force]             copy one out to a directory you own
+
+SRC is always a path: sekka never fetches a pack over the network.
+Play one with `sekka --pack NAME` (or SEKKA_PACK=NAME); packs live in ~/.sekka/packs
+unless SEKKA_PACKS_DIR says otherwise."""
+
+PACK_VERBS = ("list", "show", "install", "remove", "fork")
+PACK_ARITY = {"list": (0, 0), "show": (1, 1), "install": (1, 1), "remove": (1, 1), "fork": (1, 2)}
+
+
+def pack_usage_error(args: argparse.Namespace) -> Optional[str]:
+    """Refusal text for a malformed `sekka pack ...` line, or None when it is fine.
+
+    The verb grammar is checked here rather than by argparse so a mistake reads as a
+    sentence about packs instead of a usage dump about the whole CLI.
+    """
+    if args.run_mode != "pack":
+        return None
+    words = list(args.pack_args or [])
+    if not words:
+        return "Which pack command?\n" + PACK_USAGE
+    verb = words[0]
+    if verb not in PACK_VERBS:
+        return f"Unknown pack command '{verb}'.\n" + PACK_USAGE
+    low, high = PACK_ARITY[verb]
+    given = len(words) - 1
+    if not low <= given <= high:
+        wanted = "no arguments" if high == 0 else ("a name" if low == high == 1 else "a name and an optional destination")
+        return f"'sekka pack {verb}' takes {wanted}, got {given}."
+    if verb != "install" and args.pack_name:
+        return f"--name only applies to 'sekka pack install'.\n" + PACK_USAGE
+    if verb == "fork" and given == 1 and args.force:
+        return None
+    return None
+
+
+def run_pack_command(args: argparse.Namespace) -> int:
+    """Handle `sekka pack ...`. Never starts a session, never talks to an endpoint."""
+    from . import packs
+
+    words = list(args.pack_args or [])
+    verb, rest = words[0], words[1:]
+    try:
+        if verb == "list":
+            return _pack_list()
+        if verb == "show":
+            return _pack_show(rest[0])
+        if verb == "install":
+            return _pack_install(rest[0], args.pack_name, args.force)
+        if verb == "remove":
+            gone = packs.remove(rest[0], force=args.force)
+            print(f"Removed pack {gone}")
+            return 0
+        if verb == "fork":
+            name = rest[0]
+            target = packs.fork_pack(name, rest[1] if len(rest) > 1 else f"{packs.slugify(name)}-custom", force=args.force)
+            print(f"Copied pack '{name}' to {target}")
+            print(f"  edit it and play it from there: sekka --pack {target}")
+            print("  a fork is yours: /note writes into it, and reinstalling the original will not touch it")
+            return 0
+    except packs.PackError as exc:
+        print(f"sekka: {exc}", file=sys.stderr)
+        return 2
+    return 2
+
+
+def _pack_list() -> int:
+    from . import packs
+
+    rows = packs.list_packs()
+    if not rows:
+        print(f"No packs installed. Packs live in: {packs.packs_dir()}")
+        print("Install one with: sekka pack install <directory or archive>")
+        return 0
+    for row in rows:
+        lore = f", {len(row['knowledge'])} lore files" if row["knowledge"] else ""
+        broken = f"  [{row['error']}]" if row["error"] else ""
+        print(f"  {row['name']:<26} {row['title']}{lore}{broken}")
+    return 0
+
+
+def _pack_show(spec: str) -> int:
+    from . import packs
+
+    found = packs.resolve_pack_dir(spec)
+    data = packs.check_pack(packs.campaign_file_for(found))
+    labels = data.get("labels") or {}
+    note = str(data.get("note") or "").strip()
+    print(data.get("name") or spec)
+    print(f"  pack directory   {found}")
+    print(f"  lore resolves    {packs.pack_base_dir(found)}")
+    print(f"  labels           {labels.get('user', 'You')} / {labels.get('assistant', 'Assistant')}")
+    print(f"  note             {('holds play state: ' + note[:56]) if note else 'empty (no play state)'}")
+    for entry in data.get("knowledge", []) or []:
+        state = "on " if entry.get("enabled", True) else "off"
+        print(f"  lore  [{state}] {entry.get('file')}")
+        print(f"         {str(entry.get('description', '')).strip()[:96]}")
+    for warning in data.get("_pack_warnings", []):
+        print(f"  warning: disabled lore file not found: {warning}")
+    return 0
+
+
+def _pack_install(source: str, name: Optional[str], force: bool) -> int:
+    from . import packs
+
+    installed = packs.install(source, name=name, force=force)
+    print(f"Installed pack '{installed['name']}' - {installed['title']}")
+    print(f"  at {installed['path']}")
+    print(f"  play it: sekka --pack {installed['name']}")
+    for warning in installed["warnings"]:
+        print(f"  warning: disabled lore file not found: {warning}")
+    return 0
+
+
 def split_passthrough(argv: Optional[list[str]]) -> tuple[list[str], list[str]]:
     """Split argv on a bare `--`.
 
@@ -195,6 +336,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     refusal = serve_mode_error(args)
     if refusal:
         print(f"sekka: {refusal}", file=sys.stderr)
+        return 2
+    refusal = pack_usage_error(args)
+    if refusal:
+        print(f"sekka: {refusal}", file=sys.stderr)
+        return 2
+    if args.run_mode == "pack":
+        return run_pack_command(args)
+    if args.pack_args:
+        print(
+            "sekka: " + " ".join(args.pack_args) + " only means something after 'sekka pack'. "
+            "To play a pack, say so: sekka --pack NAME",
+            file=sys.stderr,
+        )
+        return 2
+    if args.pack_name or args.force:
+        print("sekka: --name/--force belong to 'sekka pack install|remove|fork'.", file=sys.stderr)
         return 2
     overrides = {
         "endpoint": args.endpoint,
@@ -224,7 +381,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         "serve_port": args.serve_port,
     }
     try:
-        config = load_config(overrides, config_path=args.config, campaign_path=args.campaign)
+        config = load_config(
+            overrides, config_path=args.config, campaign_path=args.campaign, pack=args.pack
+        )
     except ConfigError as exc:
         print(f"sekka: {exc}", file=sys.stderr)
         return 2
@@ -232,7 +391,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.run_mode == "serve":
         from .serve import run_server
 
-        served_flags = passthrough + (["--readonly"] if args.serve_readonly else [])
+        # The scenario has to travel to each tab: textual-serve spawns a fresh
+        # `python -m sekka` per websocket, which re-parses its own command line and
+        # would otherwise come up with no campaign at all. Without this, `sekka serve
+        # --pack frostspire` serves a blank generic chat while the flag says otherwise.
+        scenario = []
+        if args.pack:
+            scenario += ["--pack", args.pack]
+        if args.campaign:
+            scenario += ["--campaign", args.campaign]
+        if args.config:
+            scenario += ["--config", args.config]
+        served_flags = scenario + passthrough + (["--readonly"] if args.serve_readonly else [])
         return run_server(
             config,
             host=args.serve_host,

@@ -131,7 +131,8 @@ A campaign is the *scenario*, kept separate from where your model lives, so a
 whole game is one folder you `cd` into and run Sekka in. It is searched for in
 this order: `--campaign` / `SEKKA_CAMPAIGN`, the `campaign` key in your config
 file (relative to that file), `campaign.json` beside the config, then
-`./.sekka/campaign.json`.
+`./.sekka/campaign.json`. A [pack](#packs---pack-sekka_pack) is the same thing
+plus its lore files, and is usually the better way to share one.
 
 ```json
 {
@@ -158,9 +159,69 @@ file (relative to that file), `campaign.json` beside the config, then
 - `player` is appended to the system prompt as the player's character.
 - Relative `knowledge` paths resolve against the campaign's folder first, then
   the working directory, so a campaign folder works from anywhere.
+  ("From anywhere" is doing real work there: it holds for paths that live *inside*
+  the campaign's own folder. A campaign that keeps its lore beside `.sekka/`, which
+  is the layout the shipped example uses, resolves only when the working directory is
+  that folder. A [pack](#packs---pack-sekka_pack) is what makes it hold anyway.)
 - `/save` records which campaign (and role labels) a session used, and
   `sekka -r` reloads them so a saved game resumes as itself. Markdown saves stay
   plain and carry no metadata.
+
+### Packs (`--pack NAME|DIR`, `SEKKA_PACK`)
+
+A pack is a campaign plus the lore files it references, shipped as one folder:
+
+```
+frostspire/
+  .sekka/campaign.json     <- or campaign.json at the pack root
+  knowledge/world.md
+  knowledge/seraine.md
+```
+
+Packs are installed, listed, removed and forked from the command line:
+
+```bash
+sekka pack install examples/frostspire        # a directory, or .tar.gz / .tar / .zip
+sekka pack list
+sekka pack show frostspire
+sekka pack fork frostspire ~/play/marches     # a copy you can edit and annotate
+sekka pack remove frostspire
+
+sekka --pack frostspire                       # play it, from any directory
+```
+
+`~/.sekka/packs` is where they live; `SEKKA_PACKS_DIR` moves that, which is also how
+you keep packs on another disk or share one between checkouts.
+
+- **Lore paths resolve against the pack root.** This is the reason packs exist: with a
+  plain campaign file, relative lore paths fall back to the current working directory,
+  so running it from anywhere else loads the prompt and greeting and *silently* no lore.
+  A pack carries its own root, so `--pack frostspire` works from `/`, and a decoy
+  `knowledge/` in the cwd is not preferred.
+- **A pack fills the campaign layer.** It overrides `config.json` and is overridden by
+  CLI flags and the environment, exactly like `campaign.json`, so one pack runs against
+  any endpoint. Combining `--pack` with `--campaign` is an error rather than a tie-break:
+  two scenarios in play at once is never what anyone wanted.
+- **Installing copies.** Your notes are not shipped to anyone, and an install never
+  writes back into the folder it came from. The archive it was installed from is
+  recorded in `pack.json` beside the pack.
+- **Installed packs are read-only.** `/note` and the campaign half of `/save` are
+  refused, because the pack on disk is shared by every session that plays it while a
+  note is one player's memory. `sekka pack fork NAME DIR` gives you a directory that is
+  yours; a pack played straight out of a git checkout is read-only for the same reason
+  (it would leave your scratchpad as an uncommitted diff in someone's repo).
+- **Install is validation.** The campaign is checked as at load time, and every enabled
+  lore file must exist, be `.md` or `.txt`, and stay inside the pack - a pack may not
+  name an absolute path or climb out with `..`. Missing *disabled* lore only warns.
+  Archives are extracted through a guard: no absolute paths, no `..`, no symlinks, no
+  device entries, with caps on entry count and total size.
+- **`sekka pack install` takes a path, never a URL.** A pack is a handful of text files;
+  `scp` it over. Fetching packs on demand would make "install this pack" mean "run what
+  that server felt like sending", and no flag makes that safe.
+
+In serve mode `--pack` reaches each browser tab: `sekka serve --pack frostspire` works,
+as does `sekka serve -- --pack frostspire`. In read-only serve the pack is read-only as
+well, which is the state a guest tab should be in anyway.
 
 ### Streaming (`--stream` / `--no-stream`, `stream`)
 
